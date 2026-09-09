@@ -215,6 +215,17 @@ func (d *Driver) SetInfo(info host.Info) {
 	d.info = info
 }
 
+func (d *Driver) Pull(ctx context.Context, ref string, progress func(string)) error {
+	if err := d.record("Pull", ref); err != nil {
+		return err
+	}
+	if progress != nil {
+		progress("Pulling from " + ref)
+		progress("Status: Downloaded newer image for " + ref)
+	}
+	return nil
+}
+
 func (d *Driver) Info(ctx context.Context) (host.Info, error) {
 	if err := d.record("Info"); err != nil {
 		return host.Info{}, err

@@ -5,7 +5,7 @@
 │                    │ │                    │ │                    │ │ all clear          │
 ╰────────────────────╯ ╰────────────────────╯ ╰────────────────────╯ ╰────────────────────╯
 ╭──────────────────────────────────────────────────────────────────────────────────────────╮
-│ SERVERS                                                       u start · S stop · ↑↓ move │
+│ SERVERS                               u start · S stop · r restart · b backup · U update │
 │   NAME             GAME      STATE       PLYR    CPU       MEM  UPTIME PORTS / TASK      │
 │ ▌ palworld-sat     palworld  ? unknown      —      —         —       — engine unreachab… │
 │   valheim-huldra   valheim   ? unknown      —      —         —       — engine unreachab… │

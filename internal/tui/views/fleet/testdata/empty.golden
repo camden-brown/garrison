@@ -5,7 +5,7 @@
 │                    │ │                    │ │                    │ │ all clear          │
 ╰────────────────────╯ ╰────────────────────╯ ╰────────────────────╯ ╰────────────────────╯
 ╭──────────────────────────────────────────────────────────────────────────────────────────╮
-│ SERVERS                                                       u start · S stop · ↑↓ move │
+│ SERVERS                               u start · S stop · r restart · b backup · U update │
 │ No containers labelled garrison.managed=1.                                               │
 │ The fleet is found by label, so anything Garrison created appears here.                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────╯

@@ -31,7 +31,8 @@ import (
 // choice, and two cursors that can disagree about which server you are looking
 // at is a bug waiting for a busy evening.
 type View struct {
-	confirm string // instance awaiting a stop confirmation, empty when none
+	confirm   string // instance awaiting confirmation, empty when none
+	confirmOp core.Op
 
 	// snap is the snapshot being drawn, held only for the length of a
 	// render so row helpers can reach the task list without every one of
@@ -54,12 +55,15 @@ var (
 	keyDown    = key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down"))
 	keyStart   = key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "start"))
 	keyStop    = key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "stop"))
+	keyRestart = key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "restart"))
+	keyBackup  = key.NewBinding(key.WithKeys("b"), key.WithHelp("b", "backup"))
+	keyUpdate  = key.NewBinding(key.WithKeys("U"), key.WithHelp("U", "update"))
 	keyConfirm = key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "confirm"))
 	keyCancel  = key.NewBinding(key.WithKeys("n", "esc"), key.WithHelp("n/esc", "cancel"))
 )
 
 func (v *View) Keys() []key.Binding {
-	return []key.Binding{keyUp, keyDown, keyStart, keyStop}
+	return []key.Binding{keyUp, keyDown, keyStart, keyStop, keyRestart, keyBackup, keyUpdate}
 }
 
 func (v *View) Update(msg tea.Msg, f tui.Frame, snap core.Snapshot) (tui.View, tea.Cmd) {
@@ -75,11 +79,11 @@ func (v *View) Update(msg tea.Msg, f tui.Frame, snap core.Snapshot) (tui.View, t
 	if next.confirm != "" {
 		switch {
 		case key.Matches(msgKey, keyConfirm):
-			server := next.confirm
-			next.confirm = ""
-			return &next, tui.Action(core.OpStop, server)
+			server, op := next.confirm, next.confirmOp
+			next.confirm, next.confirmOp = "", core.OpNone
+			return &next, tui.Action(op, server)
 		case key.Matches(msgKey, keyCancel):
-			next.confirm = ""
+			next.confirm, next.confirmOp = "", core.OpNone
 		}
 		return &next, nil
 	}
@@ -98,7 +102,21 @@ func (v *View) Update(msg tea.Msg, f tui.Frame, snap core.Snapshot) (tui.View, t
 		// not ask for the server's name typed out — that friction is
 		// reserved for the three actions that can destroy a save.
 		if target != "" {
-			next.confirm = target
+			next.confirm, next.confirmOp = target, core.OpStop
+		}
+	case key.Matches(msgKey, keyRestart):
+		if target != "" {
+			next.confirm, next.confirmOp = target, core.OpRestart
+		}
+	case key.Matches(msgKey, keyBackup):
+		// Lowercase and immediate: a backup interrupts nothing and the
+		// worst outcome is a file you did not need.
+		if target != "" {
+			return &next, tui.Action(core.OpBackup, target)
+		}
+	case key.Matches(msgKey, keyUpdate):
+		if target != "" {
+			next.confirm, next.confirmOp = target, core.OpUpdate
 		}
 	}
 	return &next, nil
@@ -502,7 +520,19 @@ func hints(confirming bool) string {
 	if confirming {
 		return "y confirm · n cancel"
 	}
-	return "u start · S stop · ↑↓ move"
+	return "u start · S stop · r restart · b backup · U update"
+}
+
+// confirmPrompt says what is about to happen, naming the server. "Confirm?" on
+// its own is a question nobody can answer safely.
+func confirmPrompt(op core.Op, server string) string {
+	switch op {
+	case core.OpRestart:
+		return "restart " + server + "?  it will be down for a moment  ·  y / n"
+	case core.OpUpdate:
+		return "update " + server + "?  the world is snapshotted first  ·  y / n"
+	}
+	return "stop " + server + "?  y / n"
 }
 
 // columns is the width budget for one table row, recomputed per frame.
@@ -560,7 +590,7 @@ func (v *View) table(f tui.Frame, snap core.Snapshot, target string) string {
 
 	if v.confirm != "" {
 		b.WriteString("\n")
-		b.WriteString(t.Accent.Render("stop " + v.confirm + "?  y / n"))
+		b.WriteString(t.Accent.Render(confirmPrompt(v.confirmOp, v.confirm)))
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

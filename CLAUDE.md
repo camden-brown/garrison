@@ -28,9 +28,10 @@ cheap; recovering lost reasoning is not.
 
 ## Current state
 
-**M0 and M1 are built.** `go run ./cmd/garrison` opens a Fleet view and a
-Dashboard over real containers, with live stats and log-derived players;
-`garrison status` prints a one-line summary for a scheduled job.
+**M0, M1 and M2 are built, and M3's settings form with them.**
+`go run ./cmd/garrison` opens a Fleet view, a Dashboard, a Settings form
+and a Tasks view over real containers; `garrison status` prints a one-line
+summary for a scheduled job.
 
 - `internal/host/docker` — the driver. Endpoint resolution handles npipe,
   unix sockets and bare paths; stats compute CPU from deltas and subtract the
@@ -52,9 +53,19 @@ Dashboard over real containers, with live stats and log-derived players;
   flood cannot drive the render loop.
 - `internal/games/valheim` — the first plugin. Fixtures in `testdata/` are a
   captured session from a real server, not documentation.
-- `internal/tui` — the shell, the theme, the `View` contract; `views/fleet`
-  and `views/dashboard`, with golden renders at 120×34 and 80×24, and
-  `comp/sparkline`.
+- `internal/tasks` — the engine. Lanes are per server and serialised; steps
+  declare compensation; the journal is written before every step and an
+  interrupted task is failed and named rather than resumed.
+- `internal/store` — SQLite. The task journal, the cold metric tier and the
+  events worth keeping, with append-only migrations.
+- `internal/config` — one TOML file per server, atomic saves, hand-editable.
+- `internal/services/backup` — tar+zstd beside the world it came from, with
+  a restore that refuses to write outside its destination.
+- `internal/services/scheduler` — cron, with the two policies that decide
+  what a due job does when people are playing.
+- `internal/tui` — the shell, the rail, the theme, the `View` contract, and
+  `comp` (panel, tile, sparkline, text). Views: fleet, dashboard, settings,
+  tasks, plus stubs that say which milestone replaces them.
 
 **The named pipe is verified** (2026-09-09): a `GOOS=windows` build reached
 Docker Desktop 29.7.2 over `npipe:////./pipe/docker_engine` with no flags and
@@ -83,25 +94,28 @@ to the other. `go run ./cmd/garrison` in WSL sees the native engine,
 `garrison.exe` sees Docker Desktop. Check which fleet you are looking at
 before concluding one is empty.
 
-Five debts carried into M2, all deliberate and all noted in the code:
+Debts still outstanding, all deliberate and all noted in the code:
 
-1. Start/stop runs in a bare goroutine rather than a task. The engine is M2,
-   and `OperationBegan` / `OperationEnded` are already the shape a task emits.
-2. `Server.StopRequested` — what lets the store tell a shutdown from a crash
-   when both exit 137 — lives only in memory. Stop a server, quit, and the
-   next process sees the exit code with no memory of having asked, so it
-   reports a crash. The durable record of "we asked for this" is precisely
-   what M2's persisted task log provides; do not build a second one.
-3. The roster binds a name to a connection by claiming the oldest unnamed
+1. The roster binds a name to a connection by claiming the oldest unnamed
    one, because Valheim's log never links the two. It mis-pairs two players
    who finish loading in a different order than they connected. A game that
    can answer properly implements `games.Rostered` and skips this entirely.
-4. `Server.Console` is a 200-line tail, not the 16k-line ring DESIGN
+2. `Server.Console` is a 200-line tail, not the 16k-line ring DESIGN
    describes for the Console screen. Snapshots copy on write and the
    dashboard needs twenty lines; the full ring lands with the view that
    needs it.
-5. The bind-mount measurement from `D:\` that the design asks for at M0 has
+3. The bind-mount measurement from `D:\` that the design asks for at M0 has
    not been taken.
+4. There is no Backups *screen* yet. Archives are taken, pruned and
+   restorable, but listing them needs a poller feeding the snapshot, and
+   restoring over a live world is one of the three actions that must ask for
+   the server's name typed out.
+5. Drain is not implemented. `Restart` stops and starts; it does not warn
+   players at 15m, 5m and 1m first, because Valheim has no channel to warn
+   them on. It arrives with Zomboid's RCON.
+
+Closed since M1: start/stop are tasks, the stop record is durable in SQLite,
+and the cold metric tier has somewhere to live.
 
 `fleet.DefaultStopGrace` is 60s and nothing overrides it yet, so stopping a
 container that ignores SIGTERM takes a full minute before the kill. From M1
@@ -112,11 +126,11 @@ Verified end to end against real Docker: fleet by label, live CPU/memory/network
 histories, Valheim's log parsed into a roster and a `world save = 314` metric
 tile, with no game-specific code in any view.
 
-Next is **M2** — the task engine: lanes, steps, compensation, persistence, and
-the Tasks view. `Restart` and `Backup` first, then `Update`; the scheduler
-last, because a task engine you cannot watch is not one you should automate.
-SQLite lands here, which is also where the cold metric tier and a durable
-record of requested stops belong.
+Next is the rest of **M3** — Zomboid: two config syntaxes, RCON, Workshop
+mods with load order. The settings form and the apply diff already exist and
+were built against Valheim, so Zomboid is the test of whether the interface
+was right. Expect `Schema` and `Compile` to change; that is the point of
+doing it at M3.
 
 ## Non-negotiables
 

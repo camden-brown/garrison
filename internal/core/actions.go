@@ -101,6 +101,18 @@ func (s *Store) Backup(ctx context.Context, instance string) {
 	})
 }
 
+// Update pulls the game's image and recreates the container, snapshotting the
+// world first so a failure anywhere puts it back.
+func (s *Store) Update(ctx context.Context, instance string) {
+	if s.archives == nil {
+		s.raise(ctx, instance, fmt.Errorf("%s: update: no backup directory, and an update without one is not offered", instance))
+		return
+	}
+	s.submit(ctx, instance, tasks.KindUpdate, func(id string) *tasks.Task {
+		return tasks.Update(id, instance, tasks.TriggerManual, s.archives.For(instance), s.keepBackups)
+	})
+}
+
 // Players is how many are connected to a server, and whether that is known at
 // all. It is the scheduler's window onto the fleet: not knowing is not the
 // same as nobody being there.
@@ -125,6 +137,13 @@ func (s *Store) SubmitScheduled(ctx context.Context, server string, kind tasks.K
 		}
 		s.submit(ctx, server, kind, func(id string) *tasks.Task {
 			return tasks.Backup(id, server, trigger, s.archives.For(server), s.keepBackups)
+		})
+	case tasks.KindUpdate:
+		if s.archives == nil {
+			return
+		}
+		s.submit(ctx, server, kind, func(id string) *tasks.Task {
+			return tasks.Update(id, server, trigger, s.archives.For(server), s.keepBackups)
 		})
 	default:
 		s.raise(ctx, server, fmt.Errorf("%s: %s cannot be scheduled yet", server, kind))

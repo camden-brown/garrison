@@ -187,6 +187,62 @@ func humanBytes(n int64) string {
 	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGT"[exp])
 }
 
+// Update is the flagship composition, and everything else here is a subset of
+// it: warn, save, stop, snapshot, pull, recreate, start, healthcheck.
+//
+// The snapshot is the compensation for every step after it. That is what makes
+// cancelling at the pull and a failed healthcheck at the end have the same
+// defined outcome — the world goes back to how it was and the previous image
+// runs again. Without it, "the update failed" would mean something different
+// depending on where it failed, which is the same as meaning nothing.
+func Update(id, server string, trigger Trigger, archive Archiver, keep int) *Task {
+	return &Task{
+		ID: id, Server: server, Kind: KindUpdate, Trigger: trigger,
+		Steps: []Step{
+			quiesceStep(),
+			snapshotStep(archive),
+			stopStep(),
+			pullStep(),
+			removeStep(),
+			createStep(),
+			startStep(),
+			healthStep(),
+		},
+	}
+}
+
+// pullStep fetches the image the plan asks for.
+//
+// Its compensation is nothing: an image already on disk is not something to
+// take back, and the container is recreated from whichever image the plan
+// names either way. The rollback that matters is the snapshot below it.
+func pullStep() Step {
+	return Step{
+		Name: "pull image",
+		Est:  2 * time.Minute,
+		Run: func(ctx context.Context, s *StepCtx) error {
+			plan, err := s.Game.Plan(s.Instance)
+			if err != nil {
+				return err
+			}
+			if plan.Image == "" {
+				return errors.New("the game did not say which image to use")
+			}
+
+			last := ""
+			return s.Driver.Pull(ctx, plan.Image, func(line string) {
+				// The engine says the same thing about every layer, so only
+				// changes are worth recording — otherwise the history is
+				// four hundred lines of "Downloading".
+				if line != last {
+					last = line
+					s.Say(line)
+				}
+			})
+		},
+	}
+}
+
 // stopStep asks the server to leave, with the signal and grace its game wants.
 func stopStep() Step {
 	return Step{

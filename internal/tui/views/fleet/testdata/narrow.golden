@@ -1,6 +1,6 @@
 PLAYERS 0  ·  FLEET CPU 0%  ·  FLEET MEM 0 B  ·  ATTENTION 0
 ╭──────────────────────────────────────────────────────────────────────────────╮
-│ SERVERS                                           u start · S stop · ↑↓ move │
+│ SERVERS                   u start · S stop · r restart · b backup · U update │
 │   NAME             STATE       PLYR    CPU       MEM  UPTIME PORTS / TASK    │
 │ ▌ palworld-sat     ✕ crashed      —      —         —       — OOM killed      │
 │   valheim-huldra   ● running      0      —         —  2d 11h 2456/udp        │

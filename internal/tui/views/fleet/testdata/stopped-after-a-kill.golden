@@ -5,7 +5,7 @@
 │                    │ │                    │ │                    │ │ all clear          │
 ╰────────────────────╯ ╰────────────────────╯ ╰────────────────────╯ ╰────────────────────╯
 ╭──────────────────────────────────────────────────────────────────────────────────────────╮
-│ SERVERS                                                       u start · S stop · ↑↓ move │
+│ SERVERS                               u start · S stop · r restart · b backup · U update │
 │   NAME             GAME      STATE       PLYR    CPU       MEM  UPTIME PORTS / TASK      │
 │ ▌ zomboid-main     zomboid   ○ stopped      —      —         —       — killed after 60s… │
 ╰──────────────────────────────────────────────────────────────────────────────────────────╯

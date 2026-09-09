@@ -14,6 +14,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
@@ -70,6 +71,44 @@ func (d *Driver) Ping(ctx context.Context) error {
 		return fmt.Errorf("ping %s: %w", d.endpoint, err)
 	}
 	return nil
+}
+
+// Pull fetches an image.
+//
+// The engine streams progress as JSON lines; they are handed on as text rather
+// than parsed into a percentage, because a layered pull has no single
+// percentage and inventing one is worse than showing what the engine said.
+func (d *Driver) Pull(ctx context.Context, ref string, progress func(string)) error {
+	body, err := d.cli.ImagePull(ctx, ref, image.PullOptions{})
+	if err != nil {
+		return fmt.Errorf("pull %s: %w", ref, err)
+	}
+	defer body.Close()
+
+	dec := json.NewDecoder(body)
+	for {
+		var line struct {
+			Status   string `json:"status"`
+			Progress string `json:"progress"`
+			Error    string `json:"error"`
+		}
+		if err := dec.Decode(&line); err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return fmt.Errorf("pull %s: %w", ref, err)
+		}
+		if line.Error != "" {
+			return fmt.Errorf("pull %s: %s", ref, line.Error)
+		}
+		if progress != nil && line.Status != "" {
+			text := line.Status
+			if line.Progress != "" {
+				text += " " + line.Progress
+			}
+			progress(text)
+		}
+	}
 }
 
 // Info describes the engine's host. Called rarely — none of it changes while

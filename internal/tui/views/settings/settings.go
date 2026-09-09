@@ -40,6 +40,9 @@ type View struct {
 	group int
 	field int
 
+	// confirming is set while an apply is waiting for a yes.
+	confirming bool
+
 	// advanced reveals the fields a plugin marked as such, which are hidden
 	// by default to keep the common form short.
 	advanced bool
@@ -77,10 +80,13 @@ var (
 	keyAdvanced = key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "advanced"))
 	keyReset    = key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "reset field"))
 	keyDiscard  = key.NewBinding(key.WithKeys("D"), key.WithHelp("D", "discard all"))
+	keyApply    = key.NewBinding(key.WithKeys("A"), key.WithHelp("A", "apply"))
+	keyYes      = key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "confirm"))
+	keyNo       = key.NewBinding(key.WithKeys("n", "esc"), key.WithHelp("n/esc", "cancel"))
 )
 
 func (v *View) Keys() []key.Binding {
-	return []key.Binding{keyUp, keyDown, keyLeft, keyRight, keyToggle, keyInc, keyDec, keyAdvanced, keyReset}
+	return []key.Binding{keyUp, keyDown, keyLeft, keyRight, keyToggle, keyInc, keyDec, keyAdvanced, keyReset, keyApply}
 }
 
 func (v *View) Update(msg tea.Msg, f tui.Frame, snap core.Snapshot) (tui.View, tea.Cmd) {
@@ -95,7 +101,33 @@ func (v *View) Update(msg tea.Msg, f tui.Frame, snap core.Snapshot) (tui.View, t
 	}
 	next := *v
 
+	// A pending apply swallows every other key, the same way the fleet's
+	// stop confirmation does.
+	if next.confirming {
+		switch {
+		case key.Matches(msgKey, keyYes):
+			next.confirming = false
+			return &next, tui.Apply(srv.Name, needsRecreate(srv, form))
+		case key.Matches(msgKey, keyNo):
+			next.confirming = false
+		}
+		return &next, nil
+	}
+
 	switch {
+	case key.Matches(msgKey, keyApply):
+		if srv.Pending() == 0 {
+			return &next, nil
+		}
+		// Anything that costs more than a file write is confirmed, because
+		// the operator pressed a key on a form and may not have read the
+		// footer that says what it does.
+		if needsRecreate(srv, form) || worstImpact(srv, form) >= games.ImpactRestart {
+			next.confirming = true
+			return &next, nil
+		}
+		return &next, tui.Apply(srv.Name, false)
+
 	case key.Matches(msgKey, keyAdvanced):
 		next.advanced = !next.advanced
 		next.clamp(form)
@@ -175,6 +207,27 @@ func (v *View) clamp(form form) {
 	if v.field < 0 {
 		v.field = 0
 	}
+}
+
+// worstImpact is the most expensive thing among the pending changes, which is
+// what applying them actually costs.
+func worstImpact(srv core.Server, form form) games.Impact {
+	keys := make([]string, 0, len(srv.Draft))
+	for key := range srv.Draft {
+		if srv.Edited(key) {
+			keys = append(keys, key)
+		}
+	}
+	return form.schema.MaxImpact(keys)
+}
+
+// needsRecreate reports whether the pending changes require a new container.
+//
+// This is the one place that decides, and it decides from the plugin's own
+// Schema rather than from anything this package knows about the game — which
+// is what lets Zomboid arrive at M3 without touching the apply path.
+func needsRecreate(srv core.Server, form form) bool {
+	return worstImpact(srv, form) >= games.ImpactRecreate
 }
 
 // form is a game's schema arranged the way the screen shows it.
@@ -540,6 +593,12 @@ func (v *View) footer(f tui.Frame, srv core.Server, form form) string {
 		return t.Dim.Render("No unapplied changes.")
 	}
 
+	if v.confirming {
+		return t.Accent.Render(comp.Truncate(
+			fmt.Sprintf("apply %d change%s to %s?  %s  ·  y / n",
+				pending, plural(pending), srv.Name, applyCost(worstImpact(srv, form))), f.Width))
+	}
+
 	keys := make([]string, 0, pending)
 	for key := range srv.Draft {
 		if srv.Edited(key) {
@@ -561,8 +620,21 @@ func (v *View) footer(f tui.Frame, srv core.Server, form form) string {
 	case games.ImpactWipeRisk:
 		line += t.Err.Render("RISK THE WORLD — a backup is taken first")
 	}
-	line += t.Dim.Render("  ·  D discard")
+	line += t.Dim.Render("  ·  A apply  ·  D discard")
 	return comp.Truncate(line, f.Width)
+}
+
+// applyCost is the plain sentence, for the confirmation.
+func applyCost(impact games.Impact) string {
+	switch impact {
+	case games.ImpactRestart:
+		return "the server will be restarted"
+	case games.ImpactRecreate:
+		return "the container will be recreated; the world is untouched"
+	case games.ImpactWipeRisk:
+		return "THIS CAN DESTROY THE WORLD — a backup is taken first"
+	}
+	return "it takes effect immediately"
 }
 
 func plural(n int) string {

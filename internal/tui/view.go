@@ -94,11 +94,23 @@ type Frame struct {
 type ActionMsg struct {
 	Op     core.Op
 	Server string
+
+	// Recreate is set on an apply that needs a new container. The settings
+	// view works it out from the game's Schema, because it is the only
+	// thing that knows what a setting costs.
+	Recreate bool
 }
 
 // Action returns a tea.Cmd that emits an ActionMsg.
 func Action(op core.Op, server string) tea.Cmd {
 	return func() tea.Msg { return ActionMsg{Op: op, Server: server} }
+}
+
+// Apply returns a tea.Cmd that applies a server's pending settings.
+func Apply(server string, recreate bool) tea.Cmd {
+	return func() tea.Msg {
+		return ActionMsg{Op: core.OpApply, Server: server, Recreate: recreate}
+	}
 }
 
 // EditMsg is a view changing a setting. The shell records it in the store,

@@ -46,6 +46,11 @@ type Driver interface {
 	// StateUnknown across the fleet rather than rendered as "stopped".
 	Ping(ctx context.Context) error
 
+	// Pull fetches an image, reporting progress lines as it goes. A game
+	// server image is gigabytes, so a caller that cannot say what is
+	// happening leaves the operator watching a frozen screen.
+	Pull(ctx context.Context, image string, progress func(string)) error
+
 	// Info describes the machine the containers are running on. It changes
 	// about never, so callers poll it rarely.
 	Info(ctx context.Context) (Info, error)

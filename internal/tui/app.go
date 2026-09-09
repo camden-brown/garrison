@@ -21,6 +21,10 @@ type Store interface {
 	Snapshot() core.Snapshot
 	Start(ctx context.Context, instance string)
 	Stop(ctx context.Context, instance string)
+	Restart(ctx context.Context, instance string)
+	Backup(ctx context.Context, instance string)
+	Update(ctx context.Context, instance string)
+	ApplySettings(ctx context.Context, instance string, recreate bool)
 	EditSetting(ctx context.Context, instance, key string, value any)
 	DiscardDraft(ctx context.Context, instance string)
 	CancelTask(ctx context.Context, id string)
@@ -310,6 +314,14 @@ func (a *App) dispatch(msg ActionMsg) tea.Cmd {
 		a.store.Start(a.ctx, msg.Server)
 	case core.OpStop:
 		a.store.Stop(a.ctx, msg.Server)
+	case core.OpRestart:
+		a.store.Restart(a.ctx, msg.Server)
+	case core.OpBackup:
+		a.store.Backup(a.ctx, msg.Server)
+	case core.OpUpdate:
+		a.store.Update(a.ctx, msg.Server)
+	case core.OpApply:
+		a.store.ApplySettings(a.ctx, msg.Server, msg.Recreate)
 	}
 	return nil
 }

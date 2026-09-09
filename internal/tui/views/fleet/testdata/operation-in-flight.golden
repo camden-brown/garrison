@@ -5,7 +5,7 @@
 │                    │ │                    │ │                    │ │ 1 crash            │
 ╰────────────────────╯ ╰────────────────────╯ ╰────────────────────╯ ╰────────────────────╯
 ╭──────────────────────────────────────────────────────────────────────────────────────────╮
-│ SERVERS                                                       u start · S stop · ↑↓ move │
+│ SERVERS                               u start · S stop · r restart · b backup · U update │
 │   NAME             GAME      STATE       PLYR    CPU       MEM  UPTIME PORTS / TASK      │
 │ ▌ palworld-sat     palworld  ✕ crashed      —      —         —       — start 1/1 stop    │
 │   valheim-huldra   valheim   ● running      0      —         —  2d 11h 2456/udp          │

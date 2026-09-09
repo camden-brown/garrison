@@ -3,4 +3,4 @@
 │ ▌ Identity     │ │   • Server name           Second Huldra       recreate                │
 │   Access       │ │   World name              Huldra              WIPE RISK               │
 ╰────────────────╯ ╰───────────────────────────────────────────────────────────────────────╯
-1 unapplied change  ·  applying will recreate the container  ·  D discard
+1 unapplied change  ·  applying will recreate the container  ·  A apply  ·  D discard

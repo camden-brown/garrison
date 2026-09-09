@@ -40,6 +40,10 @@ type stubStore struct {
 	edits     []string
 	discarded []string
 	cancelled []string
+	restarted []string
+	backedUp  []string
+	updated   []string
+	applied   []string
 }
 
 func newStub(snap core.Snapshot) *stubStore {
@@ -63,6 +67,19 @@ func (s *stubStore) DiscardDraft(_ context.Context, instance string) {
 
 func (s *stubStore) CancelTask(_ context.Context, id string) {
 	s.cancelled = append(s.cancelled, id)
+}
+
+func (s *stubStore) Restart(_ context.Context, instance string) {
+	s.restarted = append(s.restarted, instance)
+}
+func (s *stubStore) Backup(_ context.Context, instance string) {
+	s.backedUp = append(s.backedUp, instance)
+}
+func (s *stubStore) Update(_ context.Context, instance string) {
+	s.updated = append(s.updated, instance)
+}
+func (s *stubStore) ApplySettings(_ context.Context, instance string, recreate bool) {
+	s.applied = append(s.applied, instance)
 }
 
 // stubView records what it was handed and emits whatever it is told to.

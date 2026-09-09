@@ -308,8 +308,8 @@ fake encodes match the thing it stands in for.
 | :-: | --- | --- |
 | **M0** ✅ | Driver and fleet list | `host.Driver` over the named pipe, the store, start/stop. Named pipe verified against Docker Desktop; the render loop still wants an hour on Windows hardware. |
 | **M1** ✅ | Live truth | Stats and log streaming, the dashboard with sparklines, Valheim behind the `Game` interface. |
-| **M2** | Task engine | Lanes, steps, compensation, persistence. Restart and backup first, then update. Scheduler last. |
-| **M3** | Second game | Zomboid: two config syntaxes, RCON, Workshop mods with load order. Plus the settings form and apply diff. |
+| **M2** ✅ | Task engine | Lanes, steps, compensation, SQLite persistence, the Tasks view. Restart, backup, update, and the scheduler. |
+| **M3** ◐ | Second game | The settings form and apply are built against Valheim. Zomboid — two config syntaxes, RCON, Workshop mods with load order — is next. |
 | **M4** | Players and mods | Session history, occupancy, the Mods view. Palworld as the third game. |
 | **M5** | Provisioning and polish | The wizard, restore, ambient mode, command palette, CLI subcommands, 80-column layouts. |
 
