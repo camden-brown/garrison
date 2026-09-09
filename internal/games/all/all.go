@@ -4,8 +4,6 @@
 // here. Nothing else in the codebase changes.
 package all
 
-// import (
-//	_ "github.com/camden-brown/garrison/internal/games/palworld"
-//	_ "github.com/camden-brown/garrison/internal/games/valheim"
-//	_ "github.com/camden-brown/garrison/internal/games/zomboid"
-// )
+import (
+	_ "github.com/camden-brown/garrison/internal/games/valheim"
+)
