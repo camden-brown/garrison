@@ -95,7 +95,7 @@ func TestStatusBarSummarisesTheFleet(t *testing.T) {
 	app := newApp(t, newStub(snapshot()), &stubView{})
 
 	out := app.View()
-	for _, want := range []string{"STUB", "3 servers", "1 up", "2 down", "npipe", "healthy"} {
+	for _, want := range []string{"STUB", "3 servers", "1 up", "2 down", "live"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status bar is missing %q:\n%s", want, out)
 		}
@@ -107,8 +107,8 @@ func TestStatusBarSaysUnreachableRatherThanNothing(t *testing.T) {
 	app := newApp(t, newStub(snap), &stubView{})
 
 	out := app.View()
-	if !strings.Contains(out, "unreachable") {
-		t.Errorf("status bar does not report the engine:\n%s", out)
+	if !strings.Contains(out, "stale") {
+		t.Errorf("status bar does not report the engine as stale:\n%s", out)
 	}
 	if !strings.Contains(out, "3 unknown") {
 		t.Errorf("status bar does not report the fleet as unknown:\n%s", out)
@@ -143,17 +143,30 @@ func TestTheRailIsDroppedWhenTheTerminalIsNarrow(t *testing.T) {
 	}
 }
 
-// Tab cycles three stops in a fixed order, and the status bar says which is
-// next — a three-way cycle is not guessable by looking at it.
-func TestTabCyclesFocusAndSaysWhatIsNext(t *testing.T) {
-	app := newApp(t, newStub(snapshot()), &stubView{})
+// Tab cycles three stops in a fixed order. Which one has focus is shown by
+// the rail rather than spelled out in the status bar, which the design keeps
+// for facts about the fleet.
+func TestTabCyclesFocus(t *testing.T) {
+	v := &stubView{}
+	app := newApp(t, newStub(snapshot()), v)
 
-	want := []string{"tab → servers", "tab → views", "tab → stage", "tab → servers"}
-	for i, hint := range want {
-		if got := app.View(); !strings.Contains(got, hint) {
-			t.Fatalf("step %d: status bar does not say %q", i, hint)
-		}
-		app.Update(tea.KeyMsg{Type: tea.KeyTab})
+	// Starts on the stage.
+	app.View()
+	if !v.rendered.Focused {
+		t.Fatal("the stage does not start focused")
+	}
+
+	app.Update(tea.KeyMsg{Type: tea.KeyTab}) // servers
+	app.View()
+	if v.rendered.Focused {
+		t.Error("the stage still claims focus after tabbing to the servers")
+	}
+
+	app.Update(tea.KeyMsg{Type: tea.KeyTab}) // views
+	app.Update(tea.KeyMsg{Type: tea.KeyTab}) // back to the stage
+	app.View()
+	if !v.rendered.Focused {
+		t.Error("three tabs did not return focus to the stage")
 	}
 }
 

@@ -399,37 +399,92 @@ func clamp(s string, width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
-// statusBar never changes position. It is the one thing on screen whose
-// location you can rely on, so it carries the facts you look for without
-// reading: which screen, fleet health, engine state, the clock.
+// statusBar never changes position.
+//
+// It is the one thing on screen whose location you can rely on, so it carries
+// the facts you look for without reading: which screen, how the fleet is
+// doing, whether anything needs you, and how fresh any of it is.
 func (a *App) statusBar() string {
 	t := a.theme
 	up, down, unknown := a.snap.Counts()
 
-	label := " FLEET "
+	label := "FLEET"
 	if len(a.views) > 0 {
-		label = " " + strings.ToUpper(a.views[a.active].Title()) + " "
+		label = strings.ToUpper(a.views[a.active].Title())
 	}
 
-	left := t.Bar.Render(label) + "  " +
-		strconv.Itoa(len(a.snap.Servers)) + " servers · " +
-		t.StateStyle(model.StateRunning).Render(strconv.Itoa(up)+" up")
+	// Dark text on an accent block. The screen name is the one thing you
+	// should be able to find without looking for it.
+	left := []string{t.Badge.Render(" " + label + " ")}
 
+	counts := []string{t.Dim.Render(strconv.Itoa(len(a.snap.Servers)) + " servers")}
+	if up > 0 {
+		counts = append(counts, t.StateStyle(model.StateRunning).Render(strconv.Itoa(up)+" up"))
+	}
 	if down > 0 {
-		left += " · " + t.Dim.Render(strconv.Itoa(down)+" down")
+		counts = append(counts, t.Dim.Render(strconv.Itoa(down)+" down"))
 	}
 	if unknown > 0 {
-		left += " · " + t.StateStyle(model.StateUnknown).Render(strconv.Itoa(unknown)+" unknown")
+		counts = append(counts, t.StateStyle(model.StateUnknown).Render(strconv.Itoa(unknown)+" unknown"))
+	}
+	left = append(left, " "+strings.Join(counts, t.Rule.Render(" · ")))
+
+	// Alerts are amber and last, because a count you only notice when it is
+	// non-zero is a count that has to sit where the eye stops.
+	if n := alertCount(a.snap); n > 0 {
+		left = append(left, "  "+t.Accent.Render(strconv.Itoa(n)+" "+plural(n, "alert", "alerts")))
 	}
 
-	right := t.Dim.Render(focusHint(a.focus)) + "  " + a.engineWord() + "  " + a.clock().Format("15:04")
+	right := strings.Join([]string{
+		t.Dim.Render(a.freshness()),
+		t.Dim.Render("? help"),
+		t.Dim.Render("Ctrl+P palette"),
+		t.Dim.Render(a.clock().Format("15:04")),
+	}, "  ")
+
+	leftText := strings.Join(left, "")
 
 	// Width, not len: both halves already carry escape sequences.
-	gap := a.width - lipgloss.Width(left) - lipgloss.Width(right)
+	gap := a.width - comp.Width(leftText) - comp.Width(right)
 	if gap < 1 {
 		gap = 1
 	}
-	return left + strings.Repeat(" ", gap) + right
+	return leftText + strings.Repeat(" ", gap) + right
+}
+
+// freshness says how current the screen is. "live 5s" means the fleet is
+// re-read that often; anything else means what you are reading is stale and
+// the bar should not pretend otherwise.
+func (a *App) freshness() string {
+	if !a.snap.Engine.OK {
+		return "stale · " + a.engineWordPlain()
+	}
+	if a.snap.Engine.Poll > 0 {
+		return "live " + core.Budget(a.snap.Engine.Poll)
+	}
+	return "live"
+}
+
+func alertCount(snap core.Snapshot) int {
+	n := 0
+	for _, srv := range snap.Servers {
+		if srv.State == model.StateCrashed {
+			n++
+		}
+	}
+	for _, notice := range snap.Notices {
+		if notice.Level != core.LevelInfo {
+			n++
+		}
+	}
+	return n
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 // focusHint says what Tab will do next, because a three-way cycle is not
@@ -444,14 +499,15 @@ func focusHint(f comp.Focus) string {
 	return "tab → servers"
 }
 
-func (a *App) engineWord() string {
-	e := a.snap.Engine
-	transport := e.Transport
+// engineWordPlain is the engine's state without styling, for embedding in a
+// line that is styled as a whole.
+func (a *App) engineWordPlain() string {
+	transport := a.snap.Engine.Transport
 	if transport == "" {
 		transport = "docker"
 	}
-	if e.OK {
-		return a.theme.Dim.Render(transport + " · healthy")
+	if a.snap.Engine.OK {
+		return transport
 	}
-	return a.theme.Err.Render(transport + " · unreachable")
+	return transport + " unreachable"
 }

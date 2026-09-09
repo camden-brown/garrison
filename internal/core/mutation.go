@@ -425,12 +425,14 @@ type EngineResolved struct {
 	At        time.Time
 	Endpoint  string
 	Transport string
+	Poll      time.Duration
 }
 
 func (m EngineResolved) apply(s Snapshot) Snapshot {
 	s.At = m.At
 	s.Engine.Endpoint = m.Endpoint
 	s.Engine.Transport = m.Transport
+	s.Engine.Poll = m.Poll
 	return s
 }
 

@@ -1,17 +1,20 @@
-╭ PLAYERS ───────────╮ ╭ FLEET CPU ─────────╮ ╭ FLEET MEM ─────────╮ ╭ ATTENTION ────── a ╮
-│0                   │ │0%                  │ │0 B                 │ │1                   │
+╭────────────────────╮ ╭────────────────────╮ ╭────────────────────╮ ╭────────────────────╮
+│ PLAYERS            │ │ FLEET CPU          │ │ FLEET MEM          │ │ ATTENTION        a │
+│ 0                  │ │ 0%                 │ │ 0 B                │ │ 1                  │
 │                    │ │                    │ │                    │ │                    │
-│                    │ │                    │ │                    │ │all clear           │
+│                    │ │                    │ │                    │ │ all clear          │
 ╰────────────────────╯ ╰────────────────────╯ ╰────────────────────╯ ╰────────────────────╯
-╭ SERVERS ───────────────────────────────────────────────────── u start · S stop · ↑↓ move ╮
-│  NAME             GAME      STATE       PLYR    CPU       MEM  UPTIME PORTS / TASK       │
-│▌ palworld-sat     palworld  ? unknown      —      —         —       — engine unreachable │
-│  valheim-huldra   valheim   ? unknown      —      —         —       — engine unreachable │
-│  zomboid-main     zomboid   ? unknown      —      —         —       — engine unreachable │
-│  zomboid-testing  zomboid   ? unknown      —      —         —       — engine unreachable │
+╭──────────────────────────────────────────────────────────────────────────────────────────╮
+│ SERVERS                                                       u start · S stop · ↑↓ move │
+│   NAME             GAME      STATE       PLYR    CPU       MEM  UPTIME PORTS / TASK      │
+│ ▌ palworld-sat     palworld  ? unknown      —      —         —       — engine unreachab… │
+│   valheim-huldra   valheim   ? unknown      —      —         —       — engine unreachab… │
+│   zomboid-main     zomboid   ? unknown      —      —         —       — engine unreachab… │
+│   zomboid-testing  zomboid   ? unknown      —      —         —       — engine unreachab… │
 ╰──────────────────────────────────────────────────────────────────────────────────────────╯
-╭ ATTENTION ────────────────────────── a ack ╮ ╭ ACTIVITY ──────────────────── all servers ╮
-│✕ docker unreachable: cannot connect to the…│ │Nothing yet.                               │
+╭────────────────────────────────────────────╮ ╭───────────────────────────────────────────╮
+│ ATTENTION                            a ack │ │ ACTIVITY                      all servers │
+│ ✕ docker unreachable: cannot connect to t… │ │ Nothing yet.                              │
 │                                            │ │                                           │
 │                                            │ │                                           │
 │                                            │ │                                           │
@@ -23,8 +26,7 @@
 │                                            │ │                                           │
 │                                            │ │                                           │
 │                                            │ │                                           │
-│────────────────────────────────────────────│ │                                           │
-│HOST                                        │ │                                           │
-│npipe · unreachable                         │ │                                           │
-│                                            │ │                                           │
+│ ────────────────────────────────────────── │ │                                           │
+│ HOST                                       │ │                                           │
+│ npipe · unreachable                        │ │                                           │
 ╰────────────────────────────────────────────╯ ╰───────────────────────────────────────────╯

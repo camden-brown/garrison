@@ -40,6 +40,10 @@ type Engine struct {
 	Err       string    // why not, when OK is false
 	LastOK    time.Time // when it last answered, so "down for 4m" is sayable
 
+	// Poll is how often the fleet is re-listed, so the status bar can say
+	// how fresh what you are looking at is.
+	Poll time.Duration
+
 	// The host's own figures, from the engine. Capacity is what turns usage
 	// into a proportion: 27 GiB means nothing until you know the machine
 	// has 64.

@@ -1,17 +1,20 @@
-╭ PLAYERS ───────────╮ ╭ FLEET CPU ─────────╮ ╭ FLEET MEM ─────────╮ ╭ ATTENTION ────── a ╮
-│0                   │ │0%                  │ │0 B                 │ │0                   │
+╭────────────────────╮ ╭────────────────────╮ ╭────────────────────╮ ╭────────────────────╮
+│ PLAYERS            │ │ FLEET CPU          │ │ FLEET MEM          │ │ ATTENTION        a │
+│ 0                  │ │ 0%                 │ │ 0 B                │ │ 0                  │
 │                    │ │                    │ │                    │ │                    │
-│                    │ │                    │ │                    │ │1 crash             │
+│                    │ │                    │ │                    │ │ 1 crash            │
 ╰────────────────────╯ ╰────────────────────╯ ╰────────────────────╯ ╰────────────────────╯
-╭ SERVERS ───────────────────────────────────────────────────── u start · S stop · ↑↓ move ╮
-│  NAME             GAME      STATE       PLYR    CPU       MEM  UPTIME PORTS / TASK       │
-│▌ palworld-sat     palworld  ✕ crashed      —      —         —       — starting…          │
-│  valheim-huldra   valheim   ● running      0      —         —  2d 11h 2456/udp           │
-│  zomboid-main     zomboid   ● running      0      —         —  6d 04h 16261/udp          │
-│  zomboid-testing  zomboid   ○ stopped      —      —         —       — exit 0             │
+╭──────────────────────────────────────────────────────────────────────────────────────────╮
+│ SERVERS                                                       u start · S stop · ↑↓ move │
+│   NAME             GAME      STATE       PLYR    CPU       MEM  UPTIME PORTS / TASK      │
+│ ▌ palworld-sat     palworld  ✕ crashed      —      —         —       — starting…         │
+│   valheim-huldra   valheim   ● running      0      —         —  2d 11h 2456/udp          │
+│   zomboid-main     zomboid   ● running      0      —         —  6d 04h 16261/udp         │
+│   zomboid-testing  zomboid   ○ stopped      —      —         —       — exit 0            │
 ╰──────────────────────────────────────────────────────────────────────────────────────────╯
-╭ ATTENTION ────────────────────────── a ack ╮ ╭ ACTIVITY ──────────────────── all servers ╮
-│✕ palworld-sat — OOM killed                 │ │Nothing yet.                               │
+╭────────────────────────────────────────────╮ ╭───────────────────────────────────────────╮
+│ ATTENTION                            a ack │ │ ACTIVITY                      all servers │
+│ ✕ palworld-sat — OOM killed                │ │ Nothing yet.                              │
 │                                            │ │                                           │
 │                                            │ │                                           │
 │                                            │ │                                           │
@@ -23,8 +26,7 @@
 │                                            │ │                                           │
 │                                            │ │                                           │
 │                                            │ │                                           │
-│────────────────────────────────────────────│ │                                           │
-│HOST                                        │ │                                           │
-│npipe · healthy                             │ │                                           │
-│                                            │ │                                           │
+│ ────────────────────────────────────────── │ │                                           │
+│ HOST                                       │ │                                           │
+│ npipe · healthy                            │ │                                           │
 ╰────────────────────────────────────────────╯ ╰───────────────────────────────────────────╯

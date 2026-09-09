@@ -300,7 +300,7 @@ func attentionSummary(snap core.Snapshot) string {
 // attention is the alert pane, with the host panel beneath it.
 func attention(f tui.Frame, snap core.Snapshot, height int) string {
 	t := f.Theme
-	width := f.Width/2 - 2
+	width := comp.Inner(f.Width / 2)
 
 	var b strings.Builder
 	shown := 0
@@ -398,7 +398,7 @@ func hostLine(snap core.Snapshot) string {
 // and newest first.
 func activity(f tui.Frame, snap core.Snapshot, height int) string {
 	t := f.Theme
-	width := f.Width/2 - 2
+	width := comp.Inner(f.Width / 2)
 
 	type line struct {
 		at     time.Time
@@ -537,7 +537,7 @@ func layout(width int) columns {
 
 func (v *View) table(f tui.Frame, snap core.Snapshot, target string) string {
 	t := f.Theme
-	c := layout(f.Width - 2)
+	c := layout(comp.Inner(f.Width))
 
 	if len(snap.Servers) == 0 {
 		return emptyExplanation(t, snap)

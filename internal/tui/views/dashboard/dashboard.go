@@ -229,7 +229,7 @@ func logTail(f tui.Frame, srv core.Server) string {
 		if line.count > 1 {
 			text += fmt.Sprintf("  %d×", line.count)
 		}
-		b.WriteString(t.Dim.Render(comp.Truncate(text, f.Width-2)))
+		b.WriteString(t.Dim.Render(comp.Truncate(text, comp.Inner(f.Width))))
 		b.WriteString("\n")
 	}
 

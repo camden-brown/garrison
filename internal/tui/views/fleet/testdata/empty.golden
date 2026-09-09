@@ -1,14 +1,17 @@
-╭ PLAYERS ───────────╮ ╭ FLEET CPU ─────────╮ ╭ FLEET MEM ─────────╮ ╭ ATTENTION ────── a ╮
-│0                   │ │0%                  │ │0 B                 │ │0                   │
+╭────────────────────╮ ╭────────────────────╮ ╭────────────────────╮ ╭────────────────────╮
+│ PLAYERS            │ │ FLEET CPU          │ │ FLEET MEM          │ │ ATTENTION        a │
+│ 0                  │ │ 0%                 │ │ 0 B                │ │ 0                  │
 │                    │ │                    │ │                    │ │                    │
-│                    │ │                    │ │                    │ │all clear           │
+│                    │ │                    │ │                    │ │ all clear          │
 ╰────────────────────╯ ╰────────────────────╯ ╰────────────────────╯ ╰────────────────────╯
-╭ SERVERS ───────────────────────────────────────────────────── u start · S stop · ↑↓ move ╮
-│No containers labelled garrison.managed=1.                                                │
-│The fleet is found by label, so anything Garrison created appears here.                   │
+╭──────────────────────────────────────────────────────────────────────────────────────────╮
+│ SERVERS                                                       u start · S stop · ↑↓ move │
+│ No containers labelled garrison.managed=1.                                               │
+│ The fleet is found by label, so anything Garrison created appears here.                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────╯
-╭ ATTENTION ────────────────────────── a ack ╮ ╭ ACTIVITY ──────────────────── all servers ╮
-│Nothing needs attention.                    │ │Nothing yet.                               │
+╭────────────────────────────────────────────╮ ╭───────────────────────────────────────────╮
+│ ATTENTION                            a ack │ │ ACTIVITY                      all servers │
+│ Nothing needs attention.                   │ │ Nothing yet.                              │
 │                                            │ │                                           │
 │                                            │ │                                           │
 │                                            │ │                                           │
@@ -24,8 +27,7 @@
 │                                            │ │                                           │
 │                                            │ │                                           │
 │                                            │ │                                           │
-│────────────────────────────────────────────│ │                                           │
-│HOST                                        │ │                                           │
-│npipe · healthy                             │ │                                           │
-│                                            │ │                                           │
+│ ────────────────────────────────────────── │ │                                           │
+│ HOST                                       │ │                                           │
+│ npipe · healthy                            │ │                                           │
 ╰────────────────────────────────────────────╯ ╰───────────────────────────────────────────╯

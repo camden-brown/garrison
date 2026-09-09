@@ -47,6 +47,13 @@ type Rail struct {
 	Focus    Focus
 }
 
+// rule is the divider between sections. Blank space separates them too, but
+// only a line says "these are different kinds of thing" — without it the view
+// list reads as more servers.
+func (r Rail) rule() string {
+	return r.Theme.Rule.Render(strings.Repeat("─", RailWidth))
+}
+
 // blank is a full-width empty line. Every line the rail emits is exactly
 // RailWidth cells, separators included, so the stage joined beside it starts
 // in the same column on every row.
@@ -63,13 +70,13 @@ func (r Rail) Render() string {
 		lines = append(lines, r.serverLine(srv))
 	}
 
-	lines = append(lines, blank())
+	lines = append(lines, r.rule())
 	lines = append(lines, r.section("VIEW", r.viewSubtitle(), r.Focus == FocusViews))
 	for i, e := range r.Entries {
 		lines = append(lines, r.entry(e.Title, e.Key, i == r.Active, r.Focus == FocusViews && i == r.Active, e.Reason != ""))
 	}
 
-	lines = append(lines, blank())
+	lines = append(lines, r.rule())
 	lines = append(lines, r.section("SCHEDULE", "", false))
 	// Nothing schedules anything until the task engine at M2. Saying so beats
 	// an empty heading that looks like a rendering fault.
@@ -107,50 +114,49 @@ func (r Rail) section(label, right string, focused bool) string {
 
 // entry is one selectable line: a cursor, a name, and the key that jumps to it.
 func (r Rail) entry(title, key string, selected, focused, unavailable bool) string {
-	cursor := "  "
+	marker := " "
 	if selected {
-		marker := "▌"
+		marker = "▌"
 		if r.Theme.ASCII {
 			marker = ">"
 		}
-		cursor = r.Theme.Accent.Render(marker) + " "
 	}
 
 	name := title
 	style := r.Theme.Dim
 	switch {
 	case unavailable:
-		// Dimmer than the rest: still reachable, and honest that there is
-		// nothing behind it yet.
-		style = r.Theme.Dim
 		name += " ·"
-	case focused:
-		style = r.Theme.Selected
-	case selected:
+	case focused, selected:
 		style = r.Theme.Title
 	}
 
-	width := RailWidth - 2 - Width(key) - 1
-	return cursor + style.Render(Pad(name, width)) + " " + r.Theme.Dim.Render(key)
+	// Every cell carries the background itself. Wrapping the finished line
+	// in a background style does not work: the first reset inside it ends
+	// the fill and the highlight stops halfway across.
+	t := r.Theme
+	width := RailWidth - 3 - Width(key)
+	return t.On(t.Accent, selected).Render(marker+" ") +
+		t.On(style, selected).Render(Pad(name, width)) +
+		t.On(t.Dim, selected).Render(" "+key)
 }
 
 func (r Rail) serverLine(srv core.Server) string {
-	glyph := r.Theme.StateStyle(srv.State).Render(r.Theme.StateGlyph(srv.State))
+	t := r.Theme
+	selected := srv.Name == r.Selected
 
 	right := "—"
 	if srv.State.Live() && len(srv.Players) > 0 {
 		right = itoa(len(srv.Players))
 	}
 
-	name := srv.Name
-	style := r.Theme.Dim
-	if srv.Name == r.Selected {
-		style = r.Theme.Title
-		if r.Focus == FocusServers {
-			style = r.Theme.Selected
-		}
+	style := t.Dim
+	if selected {
+		style = t.Title
 	}
 
-	width := RailWidth - 2 - Width(right) - 1
-	return glyph + " " + style.Render(Pad(name, width)) + " " + r.Theme.Dim.Render(right)
+	width := RailWidth - 3 - Width(right)
+	return t.On(t.StateStyle(srv.State), selected).Render(t.StateGlyph(srv.State)+" ") +
+		t.On(style, selected).Render(Pad(srv.Name, width)) +
+		t.On(t.Dim, selected).Render(" "+right)
 }

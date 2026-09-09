@@ -28,18 +28,66 @@ type Theme struct {
 	// Chat is magenta and nothing else is, so a conversation separates from
 	// server output at a glance — DESIGN §4.
 	Chat lipgloss.Style
+
+	// Rule draws the dividers between sections.
+	Rule lipgloss.Style
+
+	// Badge is the screen name in the status bar: dark text on an accent
+	// block, so the one fixed thing on the display is also the most
+	// findable.
+	Badge lipgloss.Style
+
+	// Spark is the sparkline colour, cyan by default. A tile may override
+	// it — players are green because the number is a good thing.
+	Spark lipgloss.Style
+}
+
+// SelectionBG is the background for the highlighted row.
+//
+// It is a colour rather than a style because a selected row is built from many
+// differently coloured cells, and every one of them has to carry the
+// background itself. Wrapping the finished row in a background style does not
+// work: the first reset inside it ends the fill, and the highlight stops
+// halfway across.
+func (t *Theme) SelectionBG() lipgloss.TerminalColor { return colSelected }
+
+// On returns style with the row background applied, for a cell in a selected
+// row. Passing false gives the style back unchanged, so a caller can write one
+// expression for both cases.
+func (t *Theme) On(style lipgloss.Style, selected bool) lipgloss.Style {
+	if !selected {
+		return style
+	}
+	return style.Background(colSelected)
 }
 
 // Six hues, each with one job. Amber is the interface accent — focus and
 // selection — and is never a status, so a highlighted row cannot be mistaken
 // for a warning.
+//
+// These are 256-colour values rather than the base sixteen because the base
+// sixteen are whatever the terminal's theme says they are, and a status colour
+// that means "healthy" in one profile and "washed-out olive" in another is not
+// carrying information. lipgloss degrades them on a 16-colour terminal, where
+// the glyph and the word still say everything the colour did.
 const (
-	colGreen   = lipgloss.Color("2")
-	colAmber   = lipgloss.Color("3")
-	colRed     = lipgloss.Color("1")
-	colGrey    = lipgloss.Color("8")
-	colMagenta = lipgloss.Color("5")
-	colCyan    = lipgloss.Color("6")
+	colGreen   = lipgloss.Color("114")
+	colAmber   = lipgloss.Color("214")
+	colRed     = lipgloss.Color("203")
+	colGrey    = lipgloss.Color("244")
+	colFaint   = lipgloss.Color("240")
+	colMagenta = lipgloss.Color("176")
+	colCyan    = lipgloss.Color("75")
+
+	// colSelected is the row highlight. Dark enough that white text stays
+	// readable on it and light enough to find at a glance, which is the
+	// whole job — the eye should land on the current row without hunting
+	// for a marker.
+	colSelected = lipgloss.Color("236")
+
+	// colInverse is text printed on an accent-coloured block: the screen
+	// name in the status bar.
+	colInverse = lipgloss.Color("232")
 )
 
 // NewTheme builds the theme for the current terminal.
@@ -47,13 +95,16 @@ func NewTheme(ascii bool) *Theme {
 	return &Theme{
 		ASCII:    ascii,
 		Title:    lipgloss.NewStyle().Bold(true),
-		Header:   lipgloss.NewStyle().Foreground(colGrey),
+		Header:   lipgloss.NewStyle().Foreground(colFaint),
 		Dim:      lipgloss.NewStyle().Foreground(colGrey),
 		Accent:   lipgloss.NewStyle().Foreground(colAmber),
 		Selected: lipgloss.NewStyle().Foreground(colAmber).Bold(true),
 		Bar:      lipgloss.NewStyle().Foreground(colCyan),
 		Err:      lipgloss.NewStyle().Foreground(colRed),
 		Chat:     lipgloss.NewStyle().Foreground(colMagenta),
+		Rule:     lipgloss.NewStyle().Foreground(colFaint),
+		Badge:    lipgloss.NewStyle().Foreground(colInverse).Background(colAmber).Bold(true),
+		Spark:    lipgloss.NewStyle().Foreground(colCyan),
 	}
 }
 

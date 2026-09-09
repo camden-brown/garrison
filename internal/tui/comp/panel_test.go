@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 // A panel sits beside another panel. One that renders a cell wider than asked
@@ -63,20 +64,37 @@ func TestPanelClampsOverlongContentVertically(t *testing.T) {
 	}
 }
 
-// The title goes into the top border. Slicing that rule by byte would cut a
-// multibyte corner rune in half.
-func TestTitleIsWrittenIntoTheBorder(t *testing.T) {
-	out := Panel{Theme: NewTheme(false), Title: "SERVERS", Right: "a ack", Width: 40}.Render("body")
-	first := strings.Split(out, "\n")[0]
+// The heading is the first line inside the box, not a gap cut into the top
+// border — a title spliced into a rule competes with the rule for the eye, and
+// the corners stop looking like corners.
+func TestTitleSitsInsideTheBox(t *testing.T) {
+	lines := strings.Split(Panel{Theme: NewTheme(false), Title: "SERVERS", Right: "a ack", Width: 40}.Render("body"), "\n")
 
-	if !strings.Contains(first, "SERVERS") {
-		t.Errorf("title is not in the top border: %q", first)
+	if strings.Contains(lines[0], "SERVERS") {
+		t.Errorf("the title is in the top border, not inside the box: %q", lines[0])
 	}
-	if !strings.Contains(first, "a ack") {
-		t.Errorf("hint is not in the top border: %q", first)
+	if !strings.Contains(lines[1], "SERVERS") {
+		t.Errorf("first line inside is %q, want the title", lines[1])
 	}
-	if strings.Contains(first, "�") {
-		t.Errorf("the border rule was cut mid-rune: %q", first)
+	if !strings.Contains(lines[1], "a ack") {
+		t.Errorf("the hint is not on the heading line: %q", lines[1])
+	}
+	if !strings.Contains(lines[2], "body") {
+		t.Errorf("the content does not follow the heading: %q", lines[2])
+	}
+}
+
+// Only the focused panel's title is accented. If they all were, the accent
+// would say nothing and the panel taking your keystrokes would not stand out.
+func TestOnlyTheFocusedPanelAccentsItsTitle(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	defer lipgloss.SetColorProfile(termenv.Ascii)
+
+	focused := Panel{Theme: NewTheme(false), Title: "SERVERS", Width: 30, Focused: true}.Render("x")
+	quiet := Panel{Theme: NewTheme(false), Title: "SERVERS", Width: 30}.Render("x")
+
+	if focused == quiet {
+		t.Error("a focused panel renders identically to an unfocused one")
 	}
 }
 
@@ -96,8 +114,9 @@ func TestTileStripFitsFourAcrossAtStageWidth(t *testing.T) {
 	// 92 is what the stage gets at 120 columns once the rail has taken its
 	// share. All four must land on one row.
 	out := TileStrip(NewTheme(false), 92, tiles)
-	if got := len(strings.Split(out, "\n")); got != 5 {
-		t.Errorf("tile strip is %d lines, want 5 — the four tiles should be one row", got)
+	// Two border rows, the heading, the value, the sparkline and the note.
+	if got := len(strings.Split(out, "\n")); got != 6 {
+		t.Errorf("tile strip is %d lines, want 6 — the four tiles should be one row", got)
 	}
 	for _, line := range strings.Split(out, "\n") {
 		if w := lipgloss.Width(line); w > 92 {

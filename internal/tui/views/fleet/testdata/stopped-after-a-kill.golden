@@ -1,14 +1,17 @@
-╭ PLAYERS ───────────╮ ╭ FLEET CPU ─────────╮ ╭ FLEET MEM ─────────╮ ╭ ATTENTION ────── a ╮
-│0                   │ │0%                  │ │0 B                 │ │0                   │
+╭────────────────────╮ ╭────────────────────╮ ╭────────────────────╮ ╭────────────────────╮
+│ PLAYERS            │ │ FLEET CPU          │ │ FLEET MEM          │ │ ATTENTION        a │
+│ 0                  │ │ 0%                 │ │ 0 B                │ │ 0                  │
 │                    │ │                    │ │                    │ │                    │
-│                    │ │                    │ │                    │ │all clear           │
+│                    │ │                    │ │                    │ │ all clear          │
 ╰────────────────────╯ ╰────────────────────╯ ╰────────────────────╯ ╰────────────────────╯
-╭ SERVERS ───────────────────────────────────────────────────── u start · S stop · ↑↓ move ╮
-│  NAME             GAME      STATE       PLYR    CPU       MEM  UPTIME PORTS / TASK       │
-│▌ zomboid-main     zomboid   ○ stopped      —      —         —       — killed after 60s g…│
+╭──────────────────────────────────────────────────────────────────────────────────────────╮
+│ SERVERS                                                       u start · S stop · ↑↓ move │
+│   NAME             GAME      STATE       PLYR    CPU       MEM  UPTIME PORTS / TASK      │
+│ ▌ zomboid-main     zomboid   ○ stopped      —      —         —       — killed after 60s… │
 ╰──────────────────────────────────────────────────────────────────────────────────────────╯
-╭ ATTENTION ────────────────────────── a ack ╮ ╭ ACTIVITY ──────────────────── all servers ╮
-│Nothing needs attention.                    │ │Nothing yet.                               │
+╭────────────────────────────────────────────╮ ╭───────────────────────────────────────────╮
+│ ATTENTION                            a ack │ │ ACTIVITY                      all servers │
+│ Nothing needs attention.                   │ │ Nothing yet.                              │
 │                                            │ │                                           │
 │                                            │ │                                           │
 │                                            │ │                                           │
@@ -23,8 +26,7 @@
 │                                            │ │                                           │
 │                                            │ │                                           │
 │                                            │ │                                           │
-│────────────────────────────────────────────│ │                                           │
-│HOST                                        │ │                                           │
-│npipe · healthy                             │ │                                           │
-│                                            │ │                                           │
+│ ────────────────────────────────────────── │ │                                           │
+│ HOST                                       │ │                                           │
+│ npipe · healthy                            │ │                                           │
 ╰────────────────────────────────────────────╯ ╰───────────────────────────────────────────╯

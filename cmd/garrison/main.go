@@ -122,6 +122,7 @@ func setup(ctx context.Context, endpoint string, interval time.Duration) (*core.
 		At:        time.Now(),
 		Endpoint:  resolved,
 		Transport: docker.Transport(resolved),
+		Poll:      interval,
 	})
 
 	return store, &wg, nil

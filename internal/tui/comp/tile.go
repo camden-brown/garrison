@@ -3,6 +3,8 @@ package comp
 import (
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"github.com/camden-brown/garrison/internal/model"
 )
 
@@ -33,6 +35,10 @@ type Tile struct {
 	// Accent overrides the value's colour, for a figure that is itself a
 	// warning — an attention count that is not zero.
 	Accent bool
+
+	// Spark overrides the sparkline colour. Players are green because more
+	// of them is a good thing; load is cyan because more of it is neither.
+	Spark *lipgloss.Style
 }
 
 // TileStrip renders tiles in a row of boxes, wrapping when the width runs out.
@@ -69,7 +75,7 @@ func InlineTiles(t *Theme, width int, tiles []Tile) string {
 }
 
 func (tile Tile) render(t *Theme) string {
-	inner := TileWidth - 2
+	inner := Inner(TileWidth)
 
 	value := t.Title.Render(Pad(tile.Value, inner))
 	if tile.Accent {
@@ -77,10 +83,14 @@ func (tile Tile) render(t *Theme) string {
 	}
 
 	spark := Sparkline{Width: inner, ASCII: t.ASCII, Min: tile.Min, Max: tile.Max}.Render(tile.Points)
+	sparkStyle := t.Spark
+	if tile.Spark != nil {
+		sparkStyle = *tile.Spark
+	}
 
 	body := strings.Join([]string{
 		value,
-		t.Bar.Render(spark),
+		sparkStyle.Render(spark),
 		t.Dim.Render(Pad(tile.Note, inner)),
 	}, "\n")
 

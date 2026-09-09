@@ -3,11 +3,11 @@ FLEET                    3  STAGE
 ✕ palworld-sat           —
 ● valheim-huldra         1
 ● zomboid-main           —
-
+──────────────────────────
 VIEW        valheim-huldra
   Dashboard              1
   Console                2
-
+──────────────────────────
 SCHEDULE
   none until M2
 
@@ -16,4 +16,4 @@ SCHEDULE
 
 
 
- FLEET   3 servers · 2 up · 1 down                                                 tab → servers  npipe · healthy  21:07
+ FLEET  3 servers · 2 up · 1 down  1 alert                                           live  ? help  Ctrl+P palette  21:07
