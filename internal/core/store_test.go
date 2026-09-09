@@ -159,6 +159,8 @@ func (c *recordingControl) Stop(ctx context.Context, instance, id string) error 
 	return c.err
 }
 
+func (c *recordingControl) StopGrace(string) time.Duration { return 90 * time.Second }
+
 func newControl() *recordingControl {
 	return &recordingControl{
 		started: make(chan string, 4),

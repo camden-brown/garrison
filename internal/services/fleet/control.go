@@ -24,7 +24,9 @@ const (
 type Controller struct {
 	Driver     host.Driver
 	StopSignal string
-	StopGrace  time.Duration
+	// Grace overrides DefaultStopGrace. Named Grace rather than StopGrace
+	// because StopGrace is the method the store calls.
+	Grace time.Duration
 }
 
 // Start brings a container up.
@@ -35,16 +37,26 @@ func (c *Controller) Start(ctx context.Context, instance, id string) error {
 	return nil
 }
 
+// StopGrace is how long Stop will wait before killing. The store asks so the
+// fleet view can say how long "stopping…" is expected to take.
+//
+// The instance is ignored today because there are no games yet. From M1 it
+// selects the game's own grace from its plan, which is the entire reason the
+// parameter is here.
+func (c *Controller) StopGrace(instance string) time.Duration {
+	if c.Grace > 0 {
+		return c.Grace
+	}
+	return DefaultStopGrace
+}
+
 // Stop takes a container down with the configured signal and grace period.
 func (c *Controller) Stop(ctx context.Context, instance, id string) error {
 	signal := c.StopSignal
 	if signal == "" {
 		signal = DefaultStopSignal
 	}
-	grace := c.StopGrace
-	if grace <= 0 {
-		grace = DefaultStopGrace
-	}
+	grace := c.StopGrace(instance)
 
 	if err := c.Driver.Stop(ctx, id, signal, grace); err != nil {
 		return fmt.Errorf("%s: stop: %w", instance, err)

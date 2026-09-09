@@ -74,10 +74,15 @@ type Container struct {
 	State    model.State
 	Detail   string // why State is what it is: "OOM killed", "paused", "unhealthy: …"
 	ExitCode int
-	Started  time.Time
-	Restarts int // consecutive restarts, for crash-loop detection
-	Health   model.Health
-	Ports    []model.PortMap
+	// OOMKilled is kept as its own fact rather than left inside Detail: a
+	// server the kernel killed is a crash even when Garrison was the one
+	// asking it to stop, and the layer that decides that should not have to
+	// match on a human-readable string.
+	OOMKilled bool
+	Started   time.Time
+	Restarts  int // consecutive restarts, for crash-loop detection
+	Health    model.Health
+	Ports     []model.PortMap
 }
 
 // Sample is one point of container resource usage.

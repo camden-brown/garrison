@@ -42,7 +42,7 @@ func TestControllerStartsAndStops(t *testing.T) {
 
 func TestControllerHonoursConfiguredStopBehaviour(t *testing.T) {
 	d := fake.New(fake.Running("valheim-huldra", "valheim", time.Now()))
-	c := &fleet.Controller{Driver: d, StopSignal: "SIGINT", StopGrace: 90 * time.Second}
+	c := &fleet.Controller{Driver: d, StopSignal: "SIGINT", Grace: 90 * time.Second}
 
 	if err := c.Stop(context.Background(), "valheim-huldra", "c0ffeevalheim-huldra"); err != nil {
 		t.Fatalf("Stop() error = %v", err)
@@ -51,6 +51,19 @@ func TestControllerHonoursConfiguredStopBehaviour(t *testing.T) {
 	call := d.Calls()[0]
 	if !strings.Contains(call, "SIGINT") || !strings.Contains(call, "1m30s") {
 		t.Errorf("stop call = %q, want SIGINT and 1m30s", call)
+	}
+}
+
+// The store asks the controller how long a stop may take, so the fleet view
+// can say "stopping… up to 60s" rather than leaving the operator guessing.
+func TestControllerReportsItsStopGrace(t *testing.T) {
+	d := fake.New()
+
+	if got := (&fleet.Controller{Driver: d}).StopGrace("anything"); got != fleet.DefaultStopGrace {
+		t.Errorf("StopGrace() = %v, want the default %v", got, fleet.DefaultStopGrace)
+	}
+	if got := (&fleet.Controller{Driver: d, Grace: 2 * time.Minute}).StopGrace("anything"); got != 2*time.Minute {
+		t.Errorf("StopGrace() = %v, want the configured 2m", got)
 	}
 }
 

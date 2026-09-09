@@ -265,11 +265,18 @@ func (v *View) row(f tui.Frame, c columns, srv core.Server, selected bool) strin
 // a stale reason, because the operator just pressed the key that caused it.
 func noteCell(t *tui.Theme, srv core.Server, width int) string {
 	if srv.Busy != core.OpNone {
-		return t.Accent.Render(tui.Pad(srv.Busy.Present()+"…", width))
+		return t.Accent.Render(tui.Pad(busyText(srv), width))
 	}
 	if srv.Detail != "" {
 		style := t.Dim
-		if srv.State == model.StateCrashed || srv.State == model.StateUnknown {
+		switch {
+		case srv.State == model.StateCrashed, srv.State == model.StateUnknown:
+			style = t.Err
+		case srv.State == model.StateStopped && srv.ExitCode != 0:
+			// Deliberately down, but it did not go quietly. The glyph stays
+			// grey because the state is honest — Garrison asked for this —
+			// while the reason stays loud, because a server killed before it
+			// finished writing is a save you may not have.
 			style = t.Err
 		}
 		return style.Render(tui.Pad(srv.Detail, width))
@@ -278,6 +285,19 @@ func noteCell(t *tui.Theme, srv core.Server, width int) string {
 		return t.Err.Render(tui.Pad("unhealthy: "+srv.Health.Detail, width))
 	}
 	return tui.Pad("", width)
+}
+
+// busyText says what is happening and, for a stop, how long it may take.
+//
+// A game server is asked to leave and then given time to finish writing, so a
+// stop is a wait rather than an instant — sixty seconds of an unqualified
+// "stopping…" is how an operator concludes it has hung and reaches for
+// something less patient than the grace period.
+func busyText(srv core.Server) string {
+	if srv.Busy == core.OpStop && srv.StopGrace > 0 {
+		return "stopping… up to " + core.Budget(srv.StopGrace)
+	}
+	return srv.Busy.Present() + "…"
 }
 
 func portList(ports []model.PortMap) string {

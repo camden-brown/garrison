@@ -14,6 +14,7 @@ package core
 
 import (
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/camden-brown/garrison/internal/model"
@@ -63,6 +64,21 @@ type Server struct {
 	// It is what lets the fleet view say "stopping…" the instant the key is
 	// pressed rather than five seconds later when the poll catches up.
 	Busy Op
+
+	// StopGrace is how long the stop in flight will wait before killing, and
+	// afterwards how long the one that killed it waited. It is what lets both
+	// "stopping… up to 60s" and "killed after 60s grace" name a real number
+	// instead of gesturing at one.
+	StopGrace time.Duration
+
+	// StopRequested records that Garrison asked this server to stop and the
+	// request succeeded.
+	//
+	// It is the difference between a crash and a shutdown, which the exit
+	// code alone cannot tell you: a server that ignores its stop signal is
+	// killed after the grace period and exits 137, exactly like one the
+	// kernel killed. Only Garrison knows which of those it asked for.
+	StopRequested bool
 }
 
 // Uptime is how long the server has been up at the given instant, or zero if
@@ -162,4 +178,27 @@ func (s Snapshot) withNotice(n Notice) Snapshot {
 	}
 	s.Notices = next
 	return s
+}
+
+// Budget renders a stop grace the way an operator reads a short wait: whole
+// seconds up to a couple of minutes, then minutes.
+//
+// It lives here rather than in the TUI because the snapshot already carries
+// human-readable Detail strings — that is what makes a view a pure function of
+// one — and both the in-flight message and the after-the-fact reason have to
+// name the same number the same way.
+func Budget(d time.Duration) string {
+	d = d.Round(time.Second)
+	if d <= 0 {
+		return "0s"
+	}
+	if d < 2*time.Minute {
+		return strconv.Itoa(int(d.Seconds())) + "s"
+	}
+
+	m := int(d.Minutes())
+	if rem := int(d.Seconds()) % 60; rem != 0 {
+		return strconv.Itoa(m) + "m" + strconv.Itoa(rem) + "s"
+	}
+	return strconv.Itoa(m) + "m"
 }

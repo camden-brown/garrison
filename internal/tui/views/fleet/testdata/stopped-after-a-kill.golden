@@ -1,0 +1,4 @@
+SERVERS  u start · S stop · ↑↓ move · q quit
+
+  NAME                 GAME         STATE        UPTIME     PORTS                NOTE
+▌ zomboid-main         zomboid      ○ stopped    —          —                    killed after 60s grace

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/camden-brown/garrison/internal/host"
@@ -32,30 +33,47 @@ type FleetObserved struct {
 }
 
 func (m FleetObserved) apply(s Snapshot) Snapshot {
-	// Busy is Garrison's own knowledge, not the engine's, so it survives the
-	// observation that would otherwise overwrite it.
+	// Busy and StopRequested are Garrison's own knowledge, not the engine's,
+	// so they survive the observation that would otherwise overwrite them.
 	busy := make(map[string]Op, len(s.Servers))
+	stopped := make(map[string]bool, len(s.Servers))
+	grace := make(map[string]time.Duration, len(s.Servers))
 	for _, srv := range s.Servers {
 		if srv.Busy != OpNone {
 			busy[srv.Name] = srv.Busy
+		}
+		if srv.StopRequested {
+			stopped[srv.Name] = true
+		}
+		if srv.StopGrace > 0 {
+			grace[srv.Name] = srv.StopGrace
 		}
 	}
 
 	servers := make([]Server, 0, len(m.Containers))
 	for _, c := range m.Containers {
+		requested := stopped[c.Instance]
+		if c.State.Live() {
+			// It is up again, so whatever we asked for last time is spent.
+			requested = false
+		}
+
+		state, detail := classify(c, requested, grace[c.Instance])
 		servers = append(servers, Server{
-			Name:     c.Instance,
-			Game:     c.Game,
-			ID:       c.ID,
-			State:    c.State,
-			Detail:   detailFor(c),
-			ExitCode: c.ExitCode,
-			Started:  c.Started,
-			Restarts: c.Restarts,
-			Ports:    c.Ports,
-			Health:   c.Health,
-			PlanHash: c.PlanHash,
-			Busy:     busy[c.Instance],
+			Name:          c.Instance,
+			Game:          c.Game,
+			ID:            c.ID,
+			State:         state,
+			Detail:        detail,
+			ExitCode:      c.ExitCode,
+			Started:       c.Started,
+			Restarts:      c.Restarts,
+			Ports:         c.Ports,
+			Health:        c.Health,
+			PlanHash:      c.PlanHash,
+			Busy:          busy[c.Instance],
+			StopGrace:     grace[c.Instance],
+			StopRequested: requested,
 		})
 	}
 
@@ -66,17 +84,41 @@ func (m FleetObserved) apply(s Snapshot) Snapshot {
 	return s.withServers(servers)
 }
 
-// detailFor is the short phrase under a state. The driver supplies one for the
-// states where the reason is not obvious; a clean exit gets its code, because
-// "stopped · exit 0" and "stopped" after a crash-and-restart read differently.
-func detailFor(c host.Container) string {
-	if c.Detail != "" {
-		return c.Detail
+// classify turns what the engine reported into what the operator should read,
+// using the one thing the engine cannot know: whether Garrison asked for this.
+//
+// A server that ignores SIGTERM is killed when its grace period runs out and
+// exits 137 — identical to a crash, and identical to an OOM kill. Reporting a
+// shutdown we requested as a crash is the fleet view lying, and it buries the
+// fact that actually matters: the server did not stop in time, so its save may
+// not have finished writing. That is a Zomboid server needing longer than its
+// configured grace, and it is the sort of thing you want to read once rather
+// than diagnose twice.
+//
+// An OOM kill stays a crash even during a requested stop. The kernel stepping
+// in is news regardless of what we were doing at the time.
+func classify(c host.Container, stopRequested bool, grace time.Duration) (model.State, string) {
+	detail := c.Detail
+	if detail == "" && c.State == model.StateStopped {
+		detail = "exit 0"
 	}
-	if c.State == model.StateStopped {
-		return "exit 0"
+
+	if !stopRequested || c.OOMKilled || c.State != model.StateCrashed {
+		return c.State, detail
 	}
-	return ""
+
+	switch {
+	case c.ExitCode == 137 && grace > 0:
+		return model.StateStopped, "killed after " + Budget(grace) + " grace"
+	case c.ExitCode == 137:
+		// No grace recorded, so this stop was requested by an earlier
+		// process. Say what happened without inventing a number.
+		return model.StateStopped, "killed — did not stop in time"
+	case c.ExitCode > 128:
+		return model.StateStopped, fmt.Sprintf("stopped on signal %d", c.ExitCode-128)
+	default:
+		return model.StateStopped, fmt.Sprintf("stopped, exit %d", c.ExitCode)
+	}
 }
 
 // FleetUnobservable is the engine failing to answer.
@@ -123,12 +165,21 @@ type OperationBegan struct {
 	At     time.Time
 	Server string
 	Op     Op
+	Grace  time.Duration // OpStop only: how long before it kills
 }
 
 func (m OperationBegan) apply(s Snapshot) Snapshot {
 	s.At = m.At
 	return s.withServers(mapServer(s.Servers, m.Server, func(srv *Server) {
 		srv.Busy = m.Op
+		if m.Op == OpStop {
+			srv.StopGrace = m.Grace
+		}
+		if m.Op == OpStart {
+			// Starting it again retires the last stop we asked for, so a
+			// later crash is reported as one.
+			srv.StopRequested = false
+		}
 	}))
 }
 
@@ -148,6 +199,9 @@ func (m OperationEnded) apply(s Snapshot) Snapshot {
 	s.At = m.At
 	s = s.withServers(mapServer(s.Servers, m.Server, func(srv *Server) {
 		srv.Busy = OpNone
+		if m.Op == OpStop && m.Err == nil {
+			srv.StopRequested = true
+		}
 	}))
 	if m.Err != nil {
 		s = s.withNotice(Notice{

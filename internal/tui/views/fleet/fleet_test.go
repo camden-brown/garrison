@@ -118,6 +118,29 @@ func TestGoldenRenders(t *testing.T) {
 			snap: snapshot(core.OperationBegan{At: now, Server: "palworld-sat", Op: core.OpStart}),
 		},
 		{
+			// A stop is a wait, not an instant, so the row says how long.
+			name: "stopping-with-grace", width: 120, height: 34,
+			snap: snapshot(core.OperationBegan{
+				At: now, Server: "zomboid-main", Op: core.OpStop, Grace: 60 * time.Second,
+			}),
+		},
+		{
+			// A stop Garrison asked for that had to be forced: the glyph
+			// stays grey because the state is honest, the reason stays red
+			// because a server killed mid-write is a save you may not have.
+			name: "stopped-after-a-kill", width: 120, height: 34,
+			snap: snapshot(
+				core.OperationBegan{At: now, Server: "zomboid-main", Op: core.OpStop, Grace: 60 * time.Second},
+				core.OperationEnded{At: now, Server: "zomboid-main", Op: core.OpStop},
+				core.FleetObserved{At: now, Containers: []host.Container{{
+					Instance: "zomboid-main",
+					Game:     "zomboid",
+					State:    model.StateCrashed,
+					ExitCode: 137,
+				}}},
+			),
+		},
+		{
 			name: "failed-operation", width: 120, height: 34,
 			snap: snapshot(core.OperationEnded{
 				At:     now,

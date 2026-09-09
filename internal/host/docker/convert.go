@@ -41,6 +41,7 @@ func containerFrom(j types.ContainerJSON) host.Container {
 	if j.State != nil {
 		c.State, c.Detail = stateFrom(*j.State)
 		c.ExitCode = j.State.ExitCode
+		c.OOMKilled = j.State.OOMKilled
 		c.Started = parseTime(j.State.StartedAt)
 		c.Health = healthFrom(j.State.Health)
 		if c.Detail == "" && c.Health.Detail != "" {

@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/camden-brown/garrison/internal/model"
 )
@@ -16,6 +17,13 @@ import (
 type Control interface {
 	Start(ctx context.Context, instance, id string) error
 	Stop(ctx context.Context, instance, id string) error
+
+	// StopGrace is how long Stop will wait for the server to leave before
+	// killing it. The store asks rather than being configured with it, so
+	// there is one source of truth; the instance is a parameter because from
+	// M1 the answer comes from the game's plan, and Zomboid wants twice what
+	// Valheim does.
+	StopGrace(instance string) time.Duration
 }
 
 // Start brings a server up. It returns as soon as the operation is recorded;
@@ -58,7 +66,14 @@ func (s *Store) operate(ctx context.Context, instance string, op Op, run func(Co
 		return
 	}
 
-	s.Send(ctx, OperationBegan{At: s.now(), Server: instance, Op: op})
+	// The grace travels with the operation so the view can say how long
+	// "stopping…" is expected to last. A progress message with no budget is
+	// the reason people press the key a second time.
+	var grace time.Duration
+	if op == OpStop {
+		grace = s.ctl.StopGrace(instance)
+	}
+	s.Send(ctx, OperationBegan{At: s.now(), Server: instance, Op: op, Grace: grace})
 	ctl, id := s.ctl, srv.ID
 	go func() {
 		err := run(ctl, id)
