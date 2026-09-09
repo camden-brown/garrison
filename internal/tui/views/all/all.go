@@ -14,6 +14,7 @@ import (
 	"github.com/camden-brown/garrison/internal/tui"
 	"github.com/camden-brown/garrison/internal/tui/views/dashboard"
 	"github.com/camden-brown/garrison/internal/tui/views/fleet"
+	"github.com/camden-brown/garrison/internal/tui/views/settings"
 	"github.com/camden-brown/garrison/internal/tui/views/stub"
 )
 
@@ -34,10 +35,7 @@ func Views() []tui.View {
 		stub.New(tui.ViewMods, "Mods", "M4",
 			"Load order you can reorder, version and update checks, and conflict detection. "+
 				"A game with no mod system gets an explanation here rather than an empty table."),
-		stub.New(tui.ViewSettings, "Settings", "M3",
-			"A form generated from the game plugin's own field list, with impact badges and a "+
-				"literal config-file diff before anything is written. Valheim's schema is already "+
-				"declared; the form that renders it is not."),
+		settings.New(),
 		stub.New(tui.ViewTasks, "Tasks", "M2",
 			"The running task expanded to its steps, with its schedule and history. Restarts, "+
 				"updates, mod syncs and backups become durable step sequences with declared rollback."),

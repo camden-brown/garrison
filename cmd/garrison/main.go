@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -22,6 +23,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/camden-brown/garrison/internal/config"
 	"github.com/camden-brown/garrison/internal/core"
 	"github.com/camden-brown/garrison/internal/games"
 	"github.com/camden-brown/garrison/internal/host"
@@ -51,6 +53,7 @@ func main() {
 
 func run(args []string) error {
 	fs := flag.NewFlagSet("garrison", flag.ContinueOnError)
+	confDir := fs.String("config", defaultConfigDir(), "directory holding garrison.toml and servers/")
 	endpoint := fs.String("docker-endpoint", "",
 		"Docker endpoint (default: npipe:////./pipe/docker_engine on Windows, unix:///var/run/docker.sock elsewhere)")
 	interval := fs.Duration("interval", fleet.DefaultInterval, "how often to re-list the fleet")
@@ -61,9 +64,9 @@ func run(args []string) error {
 
 	switch cmd := fs.Arg(0); cmd {
 	case "", "fleet":
-		return runTUI(*endpoint, *interval, *ascii)
+		return runTUI(*confDir, *endpoint, *interval, *ascii)
 	case "status":
-		return runStatus(*endpoint, *interval)
+		return runStatus(*confDir, *endpoint, *interval)
 	case "version":
 		printVersion()
 		return nil
@@ -78,7 +81,16 @@ func run(args []string) error {
 // This is the only function that knows both halves of the program exist. The
 // store never imports a service and no service imports the store; they meet
 // here, which is what keeps the dependency rule true rather than aspirational.
-func setup(ctx context.Context, endpoint string, interval time.Duration) (*core.Store, *sync.WaitGroup, error) {
+// defaultConfigDir is %APPDATA%\Garrison on Windows and the XDG config
+// directory elsewhere, which is where a person would look for it on each.
+func defaultConfigDir() string {
+	if dir, err := os.UserConfigDir(); err == nil {
+		return filepath.Join(dir, "Garrison")
+	}
+	return "garrison"
+}
+
+func setup(ctx context.Context, confDir, endpoint string, interval time.Duration) (*core.Store, *sync.WaitGroup, error) {
 	driver, err := docker.Open(endpoint, docker.Env{
 		Garrison: os.Getenv("GARRISON_DOCKER_HOST"),
 		Docker:   os.Getenv("DOCKER_HOST"),
@@ -97,6 +109,17 @@ func setup(ctx context.Context, endpoint string, interval time.Duration) (*core.
 	// exists. Neither service imports the store and the store imports
 	// neither of them — this is the only place all three are named, which
 	// is what ADR 0007 buys.
+	// The config directory is read once at startup. Watching it for changes
+	// is a later convenience; today an edit made with the tool open is
+	// picked up on the next launch, which the file being hand-editable is
+	// the whole point of.
+	servers := config.Store{Dir: filepath.Join(confDir, "servers")}
+	instances, problems := servers.LoadAll()
+	store.InstancesLoaded(ctx, instances)
+	for _, err := range problems {
+		store.Send(ctx, core.NoticeRaised{At: time.Now(), Level: core.LevelError, Text: err.Error()})
+	}
+
 	stats := metrics.NewStreamer(driver, store)
 	console := logs.NewStreamer(driver, parsers, store)
 	observer := fanOut{store: store, stats: stats, logs: console}
@@ -180,11 +203,11 @@ func metricLabels() map[string]string {
 	return out
 }
 
-func runTUI(endpoint string, interval time.Duration, ascii bool) error {
+func runTUI(confDir, endpoint string, interval time.Duration, ascii bool) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	store, wg, err := setup(ctx, endpoint, interval)
+	store, wg, err := setup(ctx, confDir, endpoint, interval)
 	if err != nil {
 		return err
 	}
@@ -208,11 +231,11 @@ func runTUI(endpoint string, interval time.Duration, ascii bool) error {
 
 // runStatus is the CLI peer of the fleet view: one line per server, for a
 // scheduled job or a stream-deck button. It waits for one poll and prints it.
-func runStatus(endpoint string, interval time.Duration) error {
+func runStatus(confDir, endpoint string, interval time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	store, wg, err := setup(ctx, endpoint, interval)
+	store, wg, err := setup(ctx, confDir, endpoint, interval)
 	if err != nil {
 		return err
 	}

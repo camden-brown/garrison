@@ -99,6 +99,24 @@ func observedFrom(servers []Server) []Server {
 	return out
 }
 
+// stillPending drops draft entries the config has caught up with, which is
+// what clears the badge after an apply without the view having to be told.
+func stillPending(draft map[string]any, inst model.Instance) map[string]any {
+	if len(draft) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(draft))
+	for k, v := range draft {
+		if !sameValue(v, inst.Settings[k]) {
+			out[k] = v
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // merge is the union of what the engine reported and what the config
 // directory says.
 //
@@ -115,6 +133,7 @@ func merge(s Snapshot, observed []Server) []Server {
 	for _, srv := range observed {
 		if inst, ok := s.instances[srv.Name]; ok {
 			srv.Instance, srv.Configured = inst, true
+			srv.Draft = stillPending(srv.Draft, inst)
 			if srv.Game == "" {
 				srv.Game = inst.Game
 			}
@@ -459,6 +478,49 @@ func (m OperationEnded) apply(s Snapshot) Snapshot {
 		})
 	}
 	return s
+}
+
+// SettingEdited records one change the operator made but has not applied.
+type SettingEdited struct {
+	At     time.Time
+	Server string
+	Key    string
+	Value  any
+}
+
+func (m SettingEdited) apply(s Snapshot) Snapshot {
+	s.At = m.At
+	return s.withServers(mapServer(s.Servers, m.Server, func(srv *Server) {
+		draft := make(map[string]any, len(srv.Draft)+1)
+		for k, v := range srv.Draft {
+			draft[k] = v
+		}
+		draft[m.Key] = m.Value
+
+		// An edit back to the configured value is not a change, and leaving
+		// it in the draft would keep the apply badge lit forever over
+		// nothing.
+		if sameValue(m.Value, srv.Instance.Settings[m.Key]) {
+			delete(draft, m.Key)
+		}
+		if len(draft) == 0 {
+			draft = nil
+		}
+		srv.Draft = draft
+	}))
+}
+
+// DraftDiscarded throws away unapplied changes.
+type DraftDiscarded struct {
+	At     time.Time
+	Server string
+}
+
+func (m DraftDiscarded) apply(s Snapshot) Snapshot {
+	s.At = m.At
+	return s.withServers(mapServer(s.Servers, m.Server, func(srv *Server) {
+		srv.Draft = nil
+	}))
 }
 
 // InstancesLoaded is what the config directory says.

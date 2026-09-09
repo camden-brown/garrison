@@ -47,6 +47,16 @@ func (s *Store) Stop(ctx context.Context, instance string) {
 	})
 }
 
+// EditSetting records a change the operator has made but not applied.
+func (s *Store) EditSetting(ctx context.Context, instance, key string, value any) {
+	s.Send(ctx, SettingEdited{At: s.now(), Server: instance, Key: key, Value: value})
+}
+
+// DiscardDraft throws away a server's unapplied changes.
+func (s *Store) DiscardDraft(ctx context.Context, instance string) {
+	s.Send(ctx, DraftDiscarded{At: s.now(), Server: instance})
+}
+
 func (s *Store) operate(ctx context.Context, instance string, op Op, run func(Control, string) error) {
 	srv, ok := s.Snapshot().Server(instance)
 	if !ok {

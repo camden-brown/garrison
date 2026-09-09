@@ -127,6 +127,16 @@ type Server struct {
 	Instance   model.Instance
 	Configured bool
 
+	// Draft holds edited settings not yet applied, keyed the game's own way.
+	// Nil means nothing is pending.
+	//
+	// It lives in the store rather than in the settings view because
+	// applying it is a task, and a task cannot reach into a view. It also
+	// means the pending count is visible from anywhere — the fleet row can
+	// say a server has unsaved changes without the settings screen being
+	// open.
+	Draft map[string]any
+
 	// Created reports whether a container exists. A configured server that
 	// has never been created is a real thing to show: it is the difference
 	// between "stopped" and "not built yet".
@@ -157,6 +167,81 @@ type Server struct {
 	// killed after the grace period and exits 137, exactly like one the
 	// kernel killed. Only Garrison knows which of those it asked for.
 	StopRequested bool
+}
+
+// Setting is the value a key would have if the draft were applied: the edit
+// if there is one, otherwise what is configured.
+func (s Server) Setting(key string) (any, bool) {
+	if v, ok := s.Draft[key]; ok {
+		return v, true
+	}
+	v, ok := s.Instance.Settings[key]
+	return v, ok
+}
+
+// Edited reports whether a key has an unapplied change that differs from what
+// is configured. An edit back to the original value is not a change.
+func (s Server) Edited(key string) bool {
+	v, ok := s.Draft[key]
+	if !ok {
+		return false
+	}
+	return !sameValue(v, s.Instance.Settings[key])
+}
+
+// Pending is how many settings differ from what is configured.
+func (s Server) Pending() int {
+	n := 0
+	for key := range s.Draft {
+		if s.Edited(key) {
+			n++
+		}
+	}
+	return n
+}
+
+// sameValue compares two setting values.
+//
+// TOML decodes an integer as int64 while a form produces an int, so a value
+// edited back to what it started as would otherwise read as changed forever —
+// and the apply badge would never clear.
+func sameValue(a, b any) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if x, ok := asInt(a); ok {
+		if y, ok := asInt(b); ok {
+			return x == y
+		}
+	}
+	if x, ok := asFloat(a); ok {
+		if y, ok := asFloat(b); ok {
+			return x == y
+		}
+	}
+	return a == b
+}
+
+func asInt(v any) (int64, bool) {
+	switch n := v.(type) {
+	case int:
+		return int64(n), true
+	case int32:
+		return int64(n), true
+	case int64:
+		return n, true
+	}
+	return 0, false
+}
+
+func asFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float32:
+		return float64(n), true
+	case float64:
+		return n, true
+	}
+	return 0, false
 }
 
 // Uptime is how long the server has been up at the given instant, or zero if

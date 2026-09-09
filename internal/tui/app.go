@@ -21,6 +21,8 @@ type Store interface {
 	Snapshot() core.Snapshot
 	Start(ctx context.Context, instance string)
 	Stop(ctx context.Context, instance string)
+	EditSetting(ctx context.Context, instance, key string, value any)
+	DiscardDraft(ctx context.Context, instance string)
 }
 
 // railThreshold is the width below which the rail is dropped.
@@ -122,6 +124,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case SelectMsg:
 		a.selected = msg.Server
+		return a, nil
+
+	case EditMsg:
+		a.store.EditSetting(a.ctx, msg.Server, msg.Key, msg.Value)
+		return a, nil
+
+	case DiscardMsg:
+		a.store.DiscardDraft(a.ctx, msg.Server)
 		return a, nil
 
 	case tea.KeyMsg:

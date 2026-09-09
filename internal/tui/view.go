@@ -101,6 +101,28 @@ func Action(op core.Op, server string) tea.Cmd {
 	return func() tea.Msg { return ActionMsg{Op: op, Server: server} }
 }
 
+// EditMsg is a view changing a setting. The shell records it in the store,
+// because the draft outlives the screen: applying it is a task, and a task
+// cannot reach into a view.
+type EditMsg struct {
+	Server string
+	Key    string
+	Value  any
+}
+
+// Edit returns a tea.Cmd that emits an EditMsg.
+func Edit(server, key string, value any) tea.Cmd {
+	return func() tea.Msg { return EditMsg{Server: server, Key: key, Value: value} }
+}
+
+// DiscardMsg throws away a server's unapplied changes.
+type DiscardMsg struct{ Server string }
+
+// Discard returns a tea.Cmd that emits a DiscardMsg.
+func Discard(server string) tea.Cmd {
+	return func() tea.Msg { return DiscardMsg{Server: server} }
+}
+
 // SelectMsg is a view asking the shell to select a different server. The
 // Fleet table and the rail's server list are the same selection seen twice, so
 // moving in either has to move both.
