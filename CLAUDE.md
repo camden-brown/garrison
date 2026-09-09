@@ -43,15 +43,49 @@ containers; `garrison status` prints the same thing for a scheduled job.
 - `internal/tui` — the shell, the theme, the `View` contract; `views/fleet` is
   the one screen, with golden renders at 120×34 and 80×24.
 
-**Not yet verified on Windows.** The named pipe and the render loop are the two
-things M0 exists to prove and neither can be proven from WSL — a unix socket
-exercises no npipe code, and colour-profile detection is a Windows problem.
-Build the `.exe` and leave it up for an hour before calling M0 done.
+**The named pipe is verified** (2026-09-09): a `GOOS=windows` build reached
+Docker Desktop 29.7.2 over `npipe:////./pipe/docker_engine` with no flags and
+listed a three-container fleet by label, crash reason and uptime included.
 
-Two M0 debts, both deliberate and both noted in the code: start/stop runs in a
-bare goroutine rather than a task (the engine is M2, and `OperationBegan` /
-`OperationEnded` are already the shape a task will emit), and the bind-mount
-measurement from `D:\` that the design asks for at M0 has not been taken.
+**The render loop is not.** It needs `garrison.exe` open in Windows Terminal
+for an hour: the status glyphs, the block elements M1 will bring, and
+colour-profile detection are all Windows problems that no amount of WSL
+testing reaches. `GARRISON_COLOR` overrides detection when it guesses wrong,
+and `--ascii` replaces the glyphs.
+
+Note the dev machine runs **two** daemons, deliberately. Docker Desktop serves
+the named pipe and is what the `.exe` talks to. A native Docker Engine inside
+the WSL distro owns `/var/lib/docker` and is what the WSL `docker` CLI talks
+to; it holds unrelated work containers, which is why it has not been removed.
+
+Docker Desktop's WSL integration *is* enabled — `/mnt/wsl/docker-desktop/` is
+mounted — but it is shadowed and cannot take effect: `/usr/bin/docker` from
+the apt install wins in `PATH`, and the native `dockerd` owns
+`/var/run/docker.sock`, so Docker Desktop cannot replace it and its own
+`docker.proxy.sock` stays root-only. Nothing is broken; do not "fix" it
+without checking what the native engine is holding first.
+
+The practical consequence: a container created through one daemon is invisible
+to the other. `go run ./cmd/garrison` in WSL sees the native engine,
+`garrison.exe` sees Docker Desktop. Check which fleet you are looking at
+before concluding one is empty.
+
+Three M0 debts, all deliberate and all noted in the code:
+
+1. Start/stop runs in a bare goroutine rather than a task. The engine is M2,
+   and `OperationBegan` / `OperationEnded` are already the shape a task emits.
+2. `Server.StopRequested` — what lets the store tell a shutdown from a crash
+   when both exit 137 — lives only in memory. Stop a server, quit, and the
+   next process sees the exit code with no memory of having asked, so it
+   reports a crash. The durable record of "we asked for this" is precisely
+   what M2's persisted task log provides; do not build a second one.
+3. The bind-mount measurement from `D:\` that the design asks for at M0 has
+   not been taken.
+
+`fleet.DefaultStopGrace` is 60s and nothing overrides it yet, so stopping a
+container that ignores SIGTERM takes a full minute before the kill. From M1
+the signal and grace come from the game's `model.Plan`, which is where they
+belong — Valheim traps SIGINT, Zomboid needs 120s.
 
 Next is **M1** — stats and logs into the three-tier rings, the Dashboard with
 sparklines, and Valheim behind the `Game` interface. Roadmap is in the README;
