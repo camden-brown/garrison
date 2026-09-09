@@ -28,8 +28,9 @@ cheap; recovering lost reasoning is not.
 
 ## Current state
 
-**M0 is built.** `go run ./cmd/garrison` opens a Fleet view over real
-containers; `garrison status` prints the same thing for a scheduled job.
+**M0 and M1 are built.** `go run ./cmd/garrison` opens a Fleet view and a
+Dashboard over real containers, with live stats and log-derived players;
+`garrison status` prints a one-line summary for a scheduled job.
 
 - `internal/host/docker` — the driver. Endpoint resolution handles npipe,
   unix sockets and bare paths; stats compute CPU from deltas and subtract the
@@ -40,8 +41,20 @@ containers; `garrison status` prints the same thing for a scheduled job.
   snapshots, conflating subscriptions.
 - `internal/services/fleet` — the poller and the start/stop controller. The
   only place M0 does I/O.
-- `internal/tui` — the shell, the theme, the `View` contract; `views/fleet` is
-  the one screen, with golden renders at 120×34 and 80×24.
+- `internal/services/streams` — one goroutine per live container, shared by
+  the stats and log streamers. The leak accounting exists once and is tested
+  there.
+- `internal/services/metrics` — the stats streamer. `model.History` holds the
+  hot (1s/5min) and warm (10s/1h) tiers; cold points come out of `Add` for
+  M2's SQLite and nothing takes them yet.
+- `internal/services/logs` — one `docker logs --follow` per container, each
+  line through the game's `Parse`, batched to the store every 100ms so a log
+  flood cannot drive the render loop.
+- `internal/games/valheim` — the first plugin. Fixtures in `testdata/` are a
+  captured session from a real server, not documentation.
+- `internal/tui` — the shell, the theme, the `View` contract; `views/fleet`
+  and `views/dashboard`, with golden renders at 120×34 and 80×24, and
+  `comp/sparkline`.
 
 **The named pipe is verified** (2026-09-09): a `GOOS=windows` build reached
 Docker Desktop 29.7.2 over `npipe:////./pipe/docker_engine` with no flags and
@@ -70,7 +83,7 @@ to the other. `go run ./cmd/garrison` in WSL sees the native engine,
 `garrison.exe` sees Docker Desktop. Check which fleet you are looking at
 before concluding one is empty.
 
-Three M0 debts, all deliberate and all noted in the code:
+Five debts carried into M2, all deliberate and all noted in the code:
 
 1. Start/stop runs in a bare goroutine rather than a task. The engine is M2,
    and `OperationBegan` / `OperationEnded` are already the shape a task emits.
@@ -79,7 +92,15 @@ Three M0 debts, all deliberate and all noted in the code:
    next process sees the exit code with no memory of having asked, so it
    reports a crash. The durable record of "we asked for this" is precisely
    what M2's persisted task log provides; do not build a second one.
-3. The bind-mount measurement from `D:\` that the design asks for at M0 has
+3. The roster binds a name to a connection by claiming the oldest unnamed
+   one, because Valheim's log never links the two. It mis-pairs two players
+   who finish loading in a different order than they connected. A game that
+   can answer properly implements `games.Rostered` and skips this entirely.
+4. `Server.Console` is a 200-line tail, not the 16k-line ring DESIGN
+   describes for the Console screen. Snapshots copy on write and the
+   dashboard needs twenty lines; the full ring lands with the view that
+   needs it.
+5. The bind-mount measurement from `D:\` that the design asks for at M0 has
    not been taken.
 
 `fleet.DefaultStopGrace` is 60s and nothing overrides it yet, so stopping a
@@ -87,10 +108,15 @@ container that ignores SIGTERM takes a full minute before the kill. From M1
 the signal and grace come from the game's `model.Plan`, which is where they
 belong — Valheim traps SIGINT, Zomboid needs 120s.
 
-Next is **M1** — stats and logs into the three-tier rings, the Dashboard with
-sparklines, and Valheim behind the `Game` interface. Roadmap is in the README;
-the reasoning for the ordering is in
-[ADR 0006](docs/decisions/0006-valheim-first.md).
+Verified end to end against real Docker: fleet by label, live CPU/memory/network
+histories, Valheim's log parsed into a roster and a `world save = 314` metric
+tile, with no game-specific code in any view.
+
+Next is **M2** — the task engine: lanes, steps, compensation, persistence, and
+the Tasks view. `Restart` and `Backup` first, then `Update`; the scheduler
+last, because a task engine you cannot watch is not one you should automate.
+SQLite lands here, which is also where the cold metric tier and a durable
+record of requested stops belong.
 
 ## Non-negotiables
 
