@@ -5,34 +5,44 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mattn/go-runewidth"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // Truncate cuts a string to a display width, appending an ellipsis when it had
 // to cut.
 //
-// Width, not length. A rune is not a cell: CJK and emoji occupy two columns,
+// Two things it has to get right, and both are invisible until they are not.
+//
+// Width, not length: a rune is not a cell. CJK and emoji occupy two columns,
 // and slicing by byte or by rune shears the grid one row at a time until the
-// whole table is crooked. go-runewidth is the only thing here that knows the
-// difference.
+// whole table is crooked.
+//
+// And escape sequences are not content. A styled string carries colour codes
+// that occupy no cells, so counting them as width truncates far too early —
+// and cutting through the middle of one leaves its tail on screen as literal
+// text, which is where a stray "[38;5;8m" beside a column heading comes from.
+// ansi.Truncate understands both; runewidth understands only the first.
 func Truncate(s string, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	if runewidth.StringWidth(s) <= width {
+	if Width(s) <= width {
 		return s
 	}
 	if width == 1 {
 		return "…"
 	}
-	return runewidth.Truncate(s, width, "…")
+	return ansi.Truncate(s, width, "…")
 }
+
+// Width is a string's display width, ignoring any escape sequences in it.
+func Width(s string) int { return ansi.StringWidth(s) }
 
 // Pad right-pads a string to a display width, truncating if it is too long, so
 // a column always occupies exactly the cells it claims.
 func Pad(s string, width int) string {
 	s = Truncate(s, width)
-	if gap := width - runewidth.StringWidth(s); gap > 0 {
+	if gap := width - Width(s); gap > 0 {
 		return s + strings.Repeat(" ", gap)
 	}
 	return s
@@ -41,7 +51,7 @@ func Pad(s string, width int) string {
 // PadLeft is Pad for right-aligned columns: numbers, mostly.
 func PadLeft(s string, width int) string {
 	s = Truncate(s, width)
-	if gap := width - runewidth.StringWidth(s); gap > 0 {
+	if gap := width - Width(s); gap > 0 {
 		return strings.Repeat(" ", gap) + s
 	}
 	return s

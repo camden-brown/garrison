@@ -3,8 +3,6 @@ package comp
 import (
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
-
 	"github.com/camden-brown/garrison/internal/core"
 )
 
@@ -54,12 +52,6 @@ type Rail struct {
 // in the same column on every row.
 func blank() string { return strings.Repeat(" ", RailWidth) }
 
-// cells is a string's display width. Not len: the rail is full of multibyte
-// runes — the state glyphs, the cursor, the em dash standing in for "no
-// players" — and byte arithmetic makes the stage beside it start in a
-// different column on every row.
-func cells(s string) int { return lipgloss.Width(s) }
-
 // Render draws the rail as one string of Height lines, each exactly RailWidth
 // cells wide so the stage beside it starts in the same column on every row.
 func (r Rail) Render() string {
@@ -104,7 +96,7 @@ func (r Rail) section(label, right string, focused bool) string {
 		style = r.Theme.Accent
 	}
 
-	gap := RailWidth - cells(label) - cells(right)
+	gap := RailWidth - Width(label) - Width(right)
 	if gap < 1 {
 		gap = 1
 	}
@@ -138,7 +130,7 @@ func (r Rail) entry(title, key string, selected, focused, unavailable bool) stri
 		style = r.Theme.Title
 	}
 
-	width := RailWidth - 2 - cells(key) - 1
+	width := RailWidth - 2 - Width(key) - 1
 	return cursor + style.Render(Pad(name, width)) + " " + r.Theme.Dim.Render(key)
 }
 
@@ -159,6 +151,6 @@ func (r Rail) serverLine(srv core.Server) string {
 		}
 	}
 
-	width := RailWidth - 2 - cells(right) - 1
+	width := RailWidth - 2 - Width(right) - 1
 	return glyph + " " + style.Render(Pad(name, width)) + " " + r.Theme.Dim.Render(right)
 }

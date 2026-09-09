@@ -41,8 +41,13 @@ func (p Panel) Render(body string) string {
 		}
 	}
 
+	// The top edge is drawn here rather than by lipgloss, because the title
+	// has to sit inside it. Asking lipgloss for it and then editing the
+	// result does not work: with colour enabled the rendered border is
+	// wrapped in escape sequences, so indexing it for the corner runes
+	// picks up an escape byte instead and the line comes out a cell short.
 	style := lipgloss.NewStyle().
-		Border(border).
+		Border(border, false, true, true, true).
 		BorderForeground(borderColour(p.Theme, p.Focused)).
 		Width(inner)
 
@@ -51,56 +56,39 @@ func (p Panel) Render(body string) string {
 	}
 
 	boxed := style.Render(clampBody(body, inner, p.Height))
-	return p.withTitle(boxed, inner)
+	return p.top(border, inner) + "\n" + boxed
 }
 
-// withTitle writes the heading into the top border, which is what makes a
-// stack of boxes readable without a legend.
-func (p Panel) withTitle(boxed string, inner int) string {
-	if p.Title == "" {
-		return boxed
-	}
+// top is the heading rule: corners, the title, and the hint.
+func (p Panel) top(border lipgloss.Border, inner int) string {
+	edge := lipgloss.NewStyle().Foreground(borderColour(p.Theme, p.Focused))
 
-	lines := strings.Split(boxed, "\n")
-	if len(lines) == 0 {
-		return boxed
+	title, right := "", ""
+	if p.Title != "" {
+		title = " " + p.Title + " "
 	}
-
-	title := " " + p.Title + " "
-	right := ""
 	if p.Right != "" {
 		right = " " + p.Right + " "
 	}
-
-	// Rebuild the top rule around the labels rather than overwriting it,
-	// because the corner runes are multibyte and slicing by byte would cut
-	// one in half.
-	rule := []rune(lines[0])
-	if len(rule) < 2 {
-		return boxed
-	}
-	corner, tail := string(rule[0]), string(rule[len(rule)-1])
-	fill := string(rule[1])
 
 	// When the labels do not fit, the hint goes first and the title is
 	// trimmed to what is left. The gap is recomputed either way: a rule that
 	// stops short leaves the box a cell narrow, and a box a cell narrow
 	// shoves its neighbour sideways.
-	if cells(title)+cells(right) > inner {
+	if Width(title)+Width(right) > inner {
 		right = ""
 		title = Truncate(title, inner)
 	}
-	gap := inner - cells(title) - cells(right)
+	gap := inner - Width(title) - Width(right)
 	if gap < 0 {
 		gap = 0
 	}
 
-	lines[0] = p.Theme.Dim.Render(corner) +
+	return edge.Render(border.TopLeft) +
 		p.Theme.Title.Render(title) +
-		p.Theme.Dim.Render(strings.Repeat(fill, gap)) +
+		edge.Render(strings.Repeat(border.Top, gap)) +
 		p.Theme.Dim.Render(right) +
-		p.Theme.Dim.Render(tail)
-	return strings.Join(lines, "\n")
+		edge.Render(border.TopRight)
 }
 
 func borderColour(t *Theme, focused bool) lipgloss.TerminalColor {
@@ -115,7 +103,7 @@ func borderColour(t *Theme, focused bool) lipgloss.TerminalColor {
 func clampBody(body string, width, height int) string {
 	lines := strings.Split(body, "\n")
 	for i, line := range lines {
-		if cells(line) > width {
+		if Width(line) > width {
 			lines[i] = Truncate(line, width)
 		}
 	}

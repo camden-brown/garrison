@@ -382,3 +382,36 @@ func populated() core.Snapshot {
 		{Kind: model.KindJoin, At: now, Player: "Dalinar", Text: "Dalinar joined"},
 	}})
 }
+
+// Every golden in this repository pins the colour profile to Ascii, which
+// emits no escape sequences at all — so a whole class of bug is invisible to
+// the rest of the suite. This renders the real shell with colour on and checks
+// the geometry survives it.
+func TestShellGeometrySurvivesColour(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	defer lipgloss.SetColorProfile(termenv.Ascii)
+
+	for _, width := range []int{80, 100, 120, 160} {
+		app := tui.NewApp(context.Background(), newStub(populated()), comp.NewTheme(false),
+			&namedView{id: tui.ViewFleet, title: "Fleet"})
+		app.Now = func() time.Time { return now }
+		app.Update(tea.WindowSizeMsg{Width: width, Height: 24})
+		app.Update(tui.SelectMsg{Server: "valheim-huldra"})
+
+		out := app.View()
+		for i, line := range strings.Split(out, "\n") {
+			if w := comp.Width(line); w > width {
+				t.Errorf("width %d: line %d is %d visible cells", width, i, w)
+			}
+			// A "[" that is not preceded by an escape byte is the tail of a
+			// sequence that got cut in half, and it prints as literal text
+			// beside whatever it was colouring.
+			for j := 0; j < len(line); j++ {
+				if line[j] == '[' && (j == 0 || line[j-1] != 0x1b) {
+					t.Errorf("width %d: line %d has a bare '[' at %d: %q", width, i, j, line)
+					break
+				}
+			}
+		}
+	}
+}
