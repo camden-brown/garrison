@@ -86,6 +86,21 @@ type Server struct {
 	// rather than something a view should render.
 	netTotal int64
 
+	// Console is the recent output, oldest first and bounded. It is a tail
+	// rather than the full 16k-line ring DESIGN describes for the Console
+	// screen: a snapshot is copied on write, and the dashboard's log tail
+	// needs the last twenty lines rather than the last four hours. The full
+	// ring arrives with the Console view that needs it.
+	Console []model.Event
+
+	// Players is who is connected, as reconstructed from log events for the
+	// games that offer no roster endpoint.
+	Players []model.Player
+
+	// connecting holds clients that have attached but not yet named
+	// themselves, oldest first. See the note on rosterApply.
+	connecting []string
+
 	// GameMetric is the fourth dashboard tile, and MetricLabel names it.
 	//
 	// Both come from the game plugin rather than from anything here: its

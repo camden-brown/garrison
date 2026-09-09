@@ -91,9 +91,71 @@ func (v *View) Render(f tui.Frame, snap core.Snapshot) string {
 	b.WriteString("\n\n")
 
 	b.WriteString(tiles(f, srv))
-	b.WriteString("\n")
+
+	if tail := logTail(f, srv); tail != "" {
+		b.WriteString(tail)
+	}
 	return b.String()
 }
+
+// logTail is the last few classified lines, newest at the bottom.
+//
+// Repeated identical lines collapse into a counter, because a crash-looping
+// mod otherwise erases the last hour of history in seconds — the tail would
+// show nothing but the same line, and the thing that caused it would be gone.
+func logTail(f tui.Frame, srv core.Server) string {
+	rows := f.Height - 12
+	if rows < 3 || len(srv.Console) == 0 {
+		return ""
+	}
+
+	collapsed := collapse(srv.Console)
+	if len(collapsed) > rows {
+		collapsed = collapsed[len(collapsed)-rows:]
+	}
+
+	t := f.Theme
+	var b strings.Builder
+	b.WriteString(t.Header.Render("CONSOLE"))
+	b.WriteString("\n")
+	for _, line := range collapsed {
+		text := line.text
+		if line.count > 1 {
+			text += fmt.Sprintf("  %d×", line.count)
+		}
+		b.WriteString(t.Dim.Render(tui.Truncate(text, f.Width)))
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+type collapsedLine struct {
+	text  string
+	count int
+}
+
+func collapse(events []model.Event) []collapsedLine {
+	out := make([]collapsedLine, 0, len(events))
+	for _, ev := range events {
+		text := ev.Text
+		if text == "" {
+			text = ev.Raw
+		}
+		if strings.TrimSpace(text) == "" {
+			// An event with nothing to say — a bare connection, say — is
+			// still a fact for the roster but not a console line.
+			continue
+		}
+		if n := len(out); n > 0 && out[n-1].text == text {
+			out[n-1].count++
+			continue
+		}
+		out = append(out, collapsedLine{text: text, count: 1})
+	}
+	return out
+}
+
+func itoa(n int) string { return fmt.Sprintf("%d", n) }
 
 // tileWidth is fixed rather than proportional so the four tiles line up with
 // each other and with the fleet table above them at any terminal width.
@@ -173,12 +235,29 @@ func memTile(srv core.Server) tileSpec {
 	}
 }
 
-// playersTile is a placeholder until the log pipeline feeds the roster. It
-// says so rather than showing a confident zero, because a dashboard that
-// reports nobody online when it simply does not know is worse than one that
-// admits it.
-func playersTile(core.Server) tileSpec {
-	return tileSpec{label: "PLAYERS", value: "—", note: "from M1 logs"}
+// playersTile counts the roster reconstructed from log events.
+//
+// A stopped server shows a dash rather than zero: "nobody is playing" and
+// "there is nothing running to play on" are different facts, and a dashboard
+// that renders them identically is one you stop trusting.
+func playersTile(srv core.Server) tileSpec {
+	if !srv.State.Live() {
+		return tileSpec{label: "PLAYERS", value: "—"}
+	}
+
+	note := ""
+	if len(srv.Players) > 0 {
+		note = strings.Join(playerNames(srv.Players), ", ")
+	}
+	return tileSpec{label: "PLAYERS", value: itoa(len(srv.Players)), note: note}
+}
+
+func playerNames(players []model.Player) []string {
+	out := make([]string, 0, len(players))
+	for _, p := range players {
+		out = append(out, p.Name)
+	}
+	return out
 }
 
 // gameTile is whatever the plugin's Parse emits. There is no game-specific

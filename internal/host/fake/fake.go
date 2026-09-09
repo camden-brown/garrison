@@ -321,8 +321,37 @@ func (d *Driver) Logs(ctx context.Context, id string, tail int) (io.ReadCloser, 
 		return nil, err
 	}
 	d.mu.Lock()
-	defer d.mu.Unlock()
-	return io.NopCloser(strings.NewReader(d.logText)), nil
+	text := d.logText
+	d.mu.Unlock()
+
+	return &followReader{r: strings.NewReader(text), done: make(chan struct{})}, nil
+}
+
+// followReader models `docker logs --follow`: it yields the canned output and
+// then blocks rather than reporting EOF, because a real follow does not end
+// while the container is running.
+//
+// The distinction matters. A reader that EOFs immediately makes a consumer
+// look like it is reconnecting in a loop, which is exactly the failure the
+// stream supervisor is built to avoid — a fake that ends every stream would
+// make that bug untestable and would fail the tests that check for it.
+type followReader struct {
+	r        *strings.Reader
+	done     chan struct{}
+	closeOne sync.Once
+}
+
+func (f *followReader) Read(p []byte) (int, error) {
+	if f.r.Len() > 0 {
+		return f.r.Read(p)
+	}
+	<-f.done
+	return 0, io.EOF
+}
+
+func (f *followReader) Close() error {
+	f.closeOne.Do(func() { close(f.done) })
+	return nil
 }
 
 func (d *Driver) Exec(ctx context.Context, id string, argv []string) ([]byte, error) {

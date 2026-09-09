@@ -33,7 +33,7 @@ var now = time.Date(2026, 9, 9, 21, 7, 0, 0, time.UTC)
 func populated() core.Snapshot {
 	s := core.Reduce(
 		core.Snapshot{Engine: core.Engine{Transport: "npipe", OK: true}},
-		core.FleetObserved{At: now, Containers: []host.Container{
+		core.FleetObserved{At: now, MetricLabels: map[string]string{"valheim": "world save"}, Containers: []host.Container{
 			{
 				Instance: "valheim-huldra",
 				Game:     "valheim",
@@ -44,6 +44,21 @@ func populated() core.Snapshot {
 			{Instance: "zomboid-main", Game: "zomboid", State: model.StateStopped},
 		}},
 	)
+
+	// A player, and a console with a repeated line to collapse.
+	s = core.Reduce(s, core.LogEventsRead{
+		At:     now,
+		Server: "valheim-huldra",
+		Events: []model.Event{
+			{Kind: model.KindConnect, At: now, SteamID: "76561190000000001"},
+			{Kind: model.KindJoin, At: now, Player: "Dalinar", Text: "Dalinar joined"},
+			{Kind: model.KindSave, At: now, Text: "world saved in 314ms", Metric: "world_save_ms", Value: 314},
+			{Kind: model.KindWarn, At: now, Text: "a mod is unhappy"},
+			{Kind: model.KindWarn, At: now, Text: "a mod is unhappy"},
+			{Kind: model.KindWarn, At: now, Text: "a mod is unhappy"},
+			{Kind: model.KindInfo, At: now, Text: "server ready"},
+		},
+	})
 
 	// A ramp plus a spike, which is what makes a sparkline worth having.
 	for i := 0; i < 60; i++ {

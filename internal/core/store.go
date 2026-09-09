@@ -19,9 +19,10 @@ type Store struct {
 	subs   []chan Snapshot
 	closed bool
 
-	muts chan Mutation
-	ctl  Control
-	now  func() time.Time
+	muts         chan Mutation
+	ctl          Control
+	now          func() time.Time
+	metricLabels map[string]string
 }
 
 // Options configure a store. Every field has a working default so a test can
@@ -39,6 +40,11 @@ type Options struct {
 	// which is correct: a mutation is a fact, and dropping facts to keep up
 	// would make the snapshot quietly wrong.
 	Buffer int
+
+	// MetricLabels names the fourth dashboard tile per game id. It is
+	// passed in rather than looked up so the store never imports the game
+	// registry — the same seam as Control.
+	MetricLabels map[string]string
 }
 
 // New returns a store that is not yet running. Nothing is applied until Run is
@@ -51,10 +57,11 @@ func New(opts Options) *Store {
 		opts.Buffer = 256
 	}
 	return &Store{
-		muts: make(chan Mutation, opts.Buffer),
-		ctl:  opts.Control,
-		now:  opts.Now,
-		snap: Snapshot{At: opts.Now()},
+		muts:         make(chan Mutation, opts.Buffer),
+		ctl:          opts.Control,
+		now:          opts.Now,
+		metricLabels: opts.MetricLabels,
+		snap:         Snapshot{At: opts.Now()},
 	}
 }
 

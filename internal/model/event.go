@@ -17,11 +17,19 @@ const (
 	KindSave
 	KindAdmin
 	KindMetric
+	// KindConnect is a client that has attached but is not yet identified.
+	//
+	// It exists because some games report identity in pieces: Valheim logs
+	// a Steam id when the socket opens and the character name up to a
+	// minute later, and only the id again when the player leaves. Without a
+	// word for the gap, a roster either shows a nameless player or misses
+	// the departure.
+	KindConnect
 )
 
 var kindNames = [...]string{
 	"unknown", "info", "warn", "error", "join", "leave",
-	"chat", "death", "save", "admin", "metric",
+	"chat", "death", "save", "admin", "metric", "connect",
 }
 
 func (k Kind) String() string {

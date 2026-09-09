@@ -24,8 +24,12 @@ import (
 
 	"github.com/camden-brown/garrison/internal/core"
 	"github.com/camden-brown/garrison/internal/games"
+	"github.com/camden-brown/garrison/internal/host"
 	"github.com/camden-brown/garrison/internal/host/docker"
+	"github.com/camden-brown/garrison/internal/model"
 	"github.com/camden-brown/garrison/internal/services/fleet"
+	"github.com/camden-brown/garrison/internal/services/logs"
+	"github.com/camden-brown/garrison/internal/services/metrics"
 	"github.com/camden-brown/garrison/internal/tui"
 	viewsall "github.com/camden-brown/garrison/internal/tui/views/all"
 
@@ -83,19 +87,35 @@ func setup(ctx context.Context, endpoint string, interval time.Duration) (*core.
 	}
 
 	resolved, _ := driver.Endpoint()
-	store := core.New(core.Options{Control: &fleet.Controller{Driver: driver}})
+	store := core.New(core.Options{
+		Control:      &fleet.Controller{Driver: driver},
+		MetricLabels: metricLabels(),
+	})
+
+	// The two streamers follow containers; the poller tells everyone what
+	// exists. Neither service imports the store and the store imports
+	// neither of them — this is the only place all three are named, which
+	// is what ADR 0007 buys.
+	stats := metrics.NewStreamer(driver, store)
+	console := logs.NewStreamer(driver, parsers, store)
+	observer := fanOut{store: store, stats: stats, logs: console}
 
 	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		store.Run(ctx)
-	}()
-	go func() {
-		defer wg.Done()
+	run := func(f func()) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			f()
+		}()
+	}
+
+	run(func() { store.Run(ctx) })
+	run(func() { stats.Run(ctx) })
+	run(func() { console.Run(ctx) })
+	run(func() {
 		poller := &fleet.Poller{Driver: driver, Interval: interval}
-		poller.Run(ctx, store)
-	}()
+		poller.Run(ctx, observer)
+	})
 
 	store.Send(ctx, core.EngineResolved{
 		At:        time.Now(),
@@ -104,6 +124,54 @@ func setup(ctx context.Context, endpoint string, interval time.Duration) (*core.
 	})
 
 	return store, &wg, nil
+}
+
+// fanOut sends each poll to everything that needs to know what is running.
+//
+// The store wants it to rebuild the fleet; the streamers want it to open and
+// close their per-container goroutines. Doing the fan-out here rather than
+// chaining the services keeps each of them unaware of the others.
+type fanOut struct {
+	store *core.Store
+	stats *metrics.Streamer
+	logs  *logs.Streamer
+}
+
+func (f fanOut) FleetObserved(ctx context.Context, at time.Time, containers []host.Container) {
+	f.store.FleetObserved(ctx, at, containers)
+	f.stats.Reconcile(containers)
+	f.logs.Reconcile(containers)
+}
+
+func (f fanOut) FleetUnobservable(ctx context.Context, at time.Time, err error) {
+	f.store.FleetUnobservable(ctx, at, err)
+	// The engine is unreachable, so every stream is already failing. Telling
+	// the streamers the fleet is empty stops them cleanly rather than
+	// leaving goroutines reading from a socket that has gone.
+	f.stats.Reconcile(nil)
+	f.logs.Reconcile(nil)
+}
+
+// parsers resolves a game id to its line parser, backed by the plugin
+// registry. It is a function so internal/services/logs does not import it.
+func parsers(game string) (func(string) model.Event, bool) {
+	g, err := games.Get(game)
+	if err != nil {
+		return nil, false
+	}
+	return g.Parse, true
+}
+
+// metricLabels is what each game calls its fourth dashboard tile.
+func metricLabels() map[string]string {
+	out := map[string]string{}
+	for _, g := range games.All() {
+		m := g.Meta()
+		if m.MetricLabel != "" {
+			out[m.ID] = m.MetricLabel
+		}
+	}
+	return out
 }
 
 func runTUI(endpoint string, interval time.Duration, ascii bool) error {

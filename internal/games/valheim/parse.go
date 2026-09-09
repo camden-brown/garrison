@@ -36,7 +36,7 @@ func (Game) Parse(line string) model.Event {
 	// player in the roster for a minute.
 	case strings.HasPrefix(body, "Got connection SteamID "):
 		return model.Event{
-			Kind:    model.KindInfo,
+			Kind:    model.KindConnect,
 			At:      at,
 			SteamID: after(body, "Got connection SteamID "),
 			Text:    "connecting",

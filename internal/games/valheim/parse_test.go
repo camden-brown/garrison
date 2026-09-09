@@ -27,7 +27,7 @@ func TestParseCapturedLines(t *testing.T) {
 			name: "socket opens with only a steam id",
 			line: "Sep  9 19:57:20 supervisord: valheim-server 09/09/2026 19:57:20: Got connection SteamID 76561190000000001",
 			// Not a join: the name does not exist yet.
-			kind:    model.KindInfo,
+			kind:    model.KindConnect,
 			steamID: "76561190000000001",
 		},
 		{

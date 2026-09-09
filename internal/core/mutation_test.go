@@ -460,3 +460,210 @@ func TestSampleKeepsItsOwnTimestamp(t *testing.T) {
 		t.Errorf("point stamped %v, want the sample's own %v", last.At, sampled)
 	}
 }
+
+func logs(server string, events ...model.Event) LogEventsRead {
+	return LogEventsRead{At: at, Server: server, Events: events}
+}
+
+func connect(id string) model.Event {
+	return model.Event{Kind: model.KindConnect, At: at, SteamID: id}
+}
+
+func join(name string) model.Event {
+	return model.Event{Kind: model.KindJoin, At: at, Player: name}
+}
+
+func leave(id string) model.Event {
+	return model.Event{Kind: model.KindLeave, At: at, SteamID: id}
+}
+
+func withServer(name string) Snapshot {
+	return apply(Snapshot{}, observed(host.Container{Instance: name, State: model.StateRunning}))
+}
+
+func names(players []model.Player) []string {
+	out := make([]string, len(players))
+	for i, p := range players {
+		out[i] = p.Name
+	}
+	return out
+}
+
+// The whole point of doing Valheim first: it reports identity in pieces, so
+// the roster has to correlate a Steam id seen at connect time with a name that
+// arrives up to a minute later, and then resolve a departure that names only
+// the id again.
+func TestRosterBindsANameToAConnection(t *testing.T) {
+	s := apply(withServer("a"), logs("a",
+		connect("76561190000000001"),
+		join("Dalinar"),
+	))
+
+	srv, _ := s.Server("a")
+	if got := names(srv.Players); len(got) != 1 || got[0] != "Dalinar" {
+		t.Fatalf("players = %v, want [Dalinar]", got)
+	}
+	if srv.Players[0].SteamID != "76561190000000001" {
+		t.Errorf("SteamID = %q, want the id from the connection", srv.Players[0].SteamID)
+	}
+}
+
+// Leaving names only the id, so without the binding above nobody would ever
+// be removed.
+func TestRosterRemovesOnADepartureThatNamesOnlyAnID(t *testing.T) {
+	s := apply(withServer("a"), logs("a",
+		connect("76561190000000001"),
+		join("Dalinar"),
+		leave("76561190000000001"),
+	))
+
+	srv, _ := s.Server("a")
+	if len(srv.Players) != 0 {
+		t.Errorf("players = %v, want empty", names(srv.Players))
+	}
+}
+
+func TestRosterHandlesTwoPlayers(t *testing.T) {
+	s := apply(withServer("a"), logs("a",
+		connect("id-1"),
+		join("Dalinar"),
+		connect("id-2"),
+		join("Kaladin"),
+		leave("id-1"),
+	))
+
+	srv, _ := s.Server("a")
+	if got := names(srv.Players); len(got) != 1 || got[0] != "Kaladin" {
+		t.Errorf("players = %v, want [Kaladin]", got)
+	}
+}
+
+// A connection that never names itself — the player backed out at character
+// select — must not leave a ghost behind for the next join to claim.
+func TestAbandonedConnectionIsCleanedUpOnLeave(t *testing.T) {
+	s := apply(withServer("a"), logs("a",
+		connect("id-ghost"),
+		leave("id-ghost"),
+		connect("id-real"),
+		join("Dalinar"),
+	))
+
+	srv, _ := s.Server("a")
+	if len(srv.Players) != 1 {
+		t.Fatalf("players = %v, want one", names(srv.Players))
+	}
+	if srv.Players[0].SteamID != "id-real" {
+		t.Errorf("SteamID = %q, want the ghost connection not to have been claimed", srv.Players[0].SteamID)
+	}
+}
+
+// Rejoining must not duplicate a row.
+func TestRejoinDoesNotDuplicate(t *testing.T) {
+	s := apply(withServer("a"), logs("a",
+		connect("id-1"), join("Dalinar"),
+		connect("id-1"), join("Dalinar"),
+	))
+
+	srv, _ := s.Server("a")
+	if got := names(srv.Players); len(got) != 1 {
+		t.Errorf("players = %v, want one row", got)
+	}
+}
+
+// A death is not a departure. Valheim reuses the join line for it, so getting
+// this wrong empties the roster every time somebody meets a troll.
+func TestDeathDoesNotRemoveThePlayer(t *testing.T) {
+	s := apply(withServer("a"), logs("a",
+		connect("id-1"),
+		join("Dalinar"),
+		model.Event{Kind: model.KindDeath, At: at, Player: "Dalinar"},
+	))
+
+	srv, _ := s.Server("a")
+	if got := names(srv.Players); len(got) != 1 {
+		t.Errorf("players = %v, want the player still connected", got)
+	}
+}
+
+func TestConsoleTailIsBounded(t *testing.T) {
+	s := withServer("a")
+	for i := 0; i < maxConsole*3; i++ {
+		s = apply(s, logs("a", model.Event{Kind: model.KindInfo, At: at, Text: "line"}))
+	}
+
+	srv, _ := s.Server("a")
+	if got := len(srv.Console); got != maxConsole {
+		t.Errorf("console holds %d lines, want the cap %d", got, maxConsole)
+	}
+}
+
+func TestConsoleKeepsTheNewestLines(t *testing.T) {
+	s := withServer("a")
+	for i := 0; i < maxConsole+3; i++ {
+		s = apply(s, logs("a", model.Event{Kind: model.KindInfo, At: at, Text: itoa(i)}))
+	}
+
+	srv, _ := s.Server("a")
+	if got := srv.Console[len(srv.Console)-1].Text; got != itoa(maxConsole+2) {
+		t.Errorf("newest console line = %q, want the last one written", got)
+	}
+}
+
+// The fourth dashboard tile: a metric a plugin emits becomes a history with no
+// game-specific code between the two.
+func TestGameMetricFlowsFromParseToHistory(t *testing.T) {
+	s := apply(withServer("a"), logs("a",
+		model.Event{Kind: model.KindSave, At: at, Metric: "world_save_ms", Value: 59},
+		model.Event{Kind: model.KindSave, At: at.Add(time.Second), Metric: "world_save_ms", Value: 314},
+	))
+
+	srv, _ := s.Server("a")
+	if got := len(srv.GameMetric.Hot); got != 2 {
+		t.Fatalf("metric history has %d points, want 2", got)
+	}
+	if last, _ := srv.GameMetric.Last(); last.Mean != 314 {
+		t.Errorf("newest metric = %v, want 314", last.Mean)
+	}
+}
+
+func TestMetricLabelComesFromTheObservation(t *testing.T) {
+	s := Reduce(Snapshot{}, FleetObserved{
+		At:           at,
+		Containers:   []host.Container{{Instance: "a", Game: "valheim", State: model.StateRunning}},
+		MetricLabels: map[string]string{"valheim": "world save"},
+	})
+
+	if got := s.Servers[0].MetricLabel; got != "world save" {
+		t.Errorf("MetricLabel = %q, want it taken from the observation", got)
+	}
+}
+
+// A poll must not empty the console or the roster.
+func TestPollKeepsConsoleAndRoster(t *testing.T) {
+	s := apply(withServer("a"), logs("a",
+		connect("id-1"),
+		join("Dalinar"),
+		model.Event{Kind: model.KindInfo, At: at, Text: "hello"},
+	))
+	s = apply(s, observed(host.Container{Instance: "a", State: model.StateRunning}))
+
+	srv, _ := s.Server("a")
+	if len(srv.Players) != 1 {
+		t.Errorf("the poll emptied the roster")
+	}
+	if len(srv.Console) == 0 {
+		t.Errorf("the poll emptied the console")
+	}
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var b []byte
+	for n > 0 {
+		b = append([]byte{byte('0' + n%10)}, b...)
+		n /= 10
+	}
+	return string(b)
+}

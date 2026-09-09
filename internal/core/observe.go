@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/camden-brown/garrison/internal/host"
+	"github.com/camden-brown/garrison/internal/model"
 )
 
 // The methods below make a *Store an observer for the pollers in
@@ -17,12 +18,17 @@ import (
 
 // FleetObserved records a complete poll of the engine.
 func (s *Store) FleetObserved(ctx context.Context, at time.Time, containers []host.Container) {
-	s.Send(ctx, FleetObserved{At: at, Containers: containers})
+	s.Send(ctx, FleetObserved{At: at, Containers: containers, MetricLabels: s.metricLabels})
 }
 
 // FleetUnobservable records the engine failing to answer.
 func (s *Store) FleetUnobservable(ctx context.Context, at time.Time, err error) {
 	s.Send(ctx, FleetUnobservable{At: at, Err: err})
+}
+
+// LogEventsRead records a batch of parsed log lines.
+func (s *Store) LogEventsRead(ctx context.Context, instance string, events []model.Event) {
+	s.Send(ctx, LogEventsRead{At: s.now(), Server: instance, Events: events})
 }
 
 // StatsSampled records one point from a container's stats stream.

@@ -30,60 +30,51 @@ type Mutation interface {
 type FleetObserved struct {
 	At         time.Time
 	Containers []host.Container
+
+	// MetricLabels names the fourth dashboard tile per game id. It rides
+	// along with the observation so the store never has to import the game
+	// registry to find out what a plugin calls its metric.
+	MetricLabels map[string]string
 }
 
 func (m FleetObserved) apply(s Snapshot) Snapshot {
-	// Busy and StopRequested are Garrison's own knowledge, not the engine's,
-	// so they survive the observation that would otherwise overwrite them.
-	// Histories, like Busy, are Garrison's own knowledge rather than the
-	// engine's. A poll every five seconds must not throw away four seconds
-	// of samples.
+	// Busy, the histories, the console tail and the roster are all
+	// Garrison's own knowledge rather than the engine's, so they survive an
+	// observation that would otherwise overwrite them. A poll lands every
+	// five seconds; without this it would discard four seconds of samples
+	// out of every five, which looks like a rendering bug for a week.
 	prior := make(map[string]Server, len(s.Servers))
-	busy := make(map[string]Op, len(s.Servers))
-	stopped := make(map[string]bool, len(s.Servers))
-	grace := make(map[string]time.Duration, len(s.Servers))
 	for _, srv := range s.Servers {
 		prior[srv.Name] = srv
-		if srv.Busy != OpNone {
-			busy[srv.Name] = srv.Busy
-		}
-		if srv.StopRequested {
-			stopped[srv.Name] = true
-		}
-		if srv.StopGrace > 0 {
-			grace[srv.Name] = srv.StopGrace
-		}
 	}
 
 	servers := make([]Server, 0, len(m.Containers))
 	for _, c := range m.Containers {
-		requested := stopped[c.Instance]
+		was := prior[c.Instance]
+
+		requested := was.StopRequested
 		if c.State.Live() {
 			// It is up again, so whatever we asked for last time is spent.
 			requested = false
 		}
 
-		state, detail := classify(c, requested, grace[c.Instance])
-		was := prior[c.Instance]
-		servers = append(servers, Server{
-			CPU:           was.CPU,
-			Mem:           was.Mem,
-			MemLimit:      was.MemLimit,
-			Name:          c.Instance,
-			Game:          c.Game,
-			ID:            c.ID,
-			State:         state,
-			Detail:        detail,
-			ExitCode:      c.ExitCode,
-			Started:       c.Started,
-			Restarts:      c.Restarts,
-			Ports:         c.Ports,
-			Health:        c.Health,
-			PlanHash:      c.PlanHash,
-			Busy:          busy[c.Instance],
-			StopGrace:     grace[c.Instance],
-			StopRequested: requested,
-		})
+		state, detail := classify(c, requested, was.StopGrace)
+
+		srv := was
+		srv.Name = c.Instance
+		srv.Game = c.Game
+		srv.ID = c.ID
+		srv.State = state
+		srv.Detail = detail
+		srv.ExitCode = c.ExitCode
+		srv.Started = c.Started
+		srv.Restarts = c.Restarts
+		srv.Ports = c.Ports
+		srv.Health = c.Health
+		srv.PlanHash = c.PlanHash
+		srv.StopRequested = requested
+		srv.MetricLabel = m.MetricLabels[c.Game]
+		servers = append(servers, srv)
 	}
 
 	s.At = m.At
@@ -214,6 +205,146 @@ func lastAt(h model.History) time.Time {
 		return p.At
 	}
 	return time.Time{}
+}
+
+// maxConsole bounds the per-server log tail carried in the snapshot.
+const maxConsole = 200
+
+// LogEventsRead is a batch of parsed lines from one container.
+//
+// A batch rather than a line because a crash-looping mod produces thousands a
+// second, and a mutation per line would put the store and the renderer under
+// exactly the load the flood is warning about.
+type LogEventsRead struct {
+	At     time.Time
+	Server string
+	Events []model.Event
+}
+
+func (m LogEventsRead) apply(s Snapshot) Snapshot {
+	if len(m.Events) == 0 {
+		return s
+	}
+
+	s.At = m.At
+	return s.withServers(mapServer(s.Servers, m.Server, func(srv *Server) {
+		for _, ev := range m.Events {
+			srv.Console = appendConsole(srv.Console, ev)
+			rosterApply(srv, ev)
+
+			if ev.Metric != "" {
+				at := ev.At
+				if at.IsZero() {
+					at = m.At
+				}
+				srv.GameMetric, _, _ = srv.GameMetric.Add(at, ev.Value)
+			}
+		}
+	}))
+}
+
+// rosterApply folds one event into the player list.
+//
+// The awkward part is that some games report identity in pieces. Valheim logs
+// a Steam id when the socket opens, the character name up to a minute later
+// with no id attached, and only the id again on departure — so nothing in the
+// log directly links a name to the connection it belongs to.
+//
+// The binding here is therefore a heuristic: a newly named character claims
+// the oldest connection still waiting for a name. It is right whenever joins
+// do not overlap, which is nearly always, and it can mis-pair two players who
+// finish loading in a different order than they connected. The alternative is
+// no roster at all for games without RCON, and a game that can answer
+// properly implements games.Rostered and never reaches this code.
+func rosterApply(srv *Server, ev model.Event) {
+	switch ev.Kind {
+	case model.KindConnect:
+		if ev.SteamID != "" {
+			srv.connecting = append(append([]string(nil), srv.connecting...), ev.SteamID)
+		}
+
+	case model.KindJoin:
+		if ev.Player == "" {
+			return
+		}
+		steamID := ev.SteamID
+		if steamID == "" && len(srv.connecting) > 0 {
+			steamID = srv.connecting[0]
+			srv.connecting = append([]string(nil), srv.connecting[1:]...)
+		}
+		srv.Players = withPlayer(srv.Players, model.Player{
+			Name:    ev.Player,
+			SteamID: steamID,
+			Since:   ev.At,
+		})
+
+	case model.KindLeave:
+		srv.Players = withoutPlayer(srv.Players, ev.SteamID, ev.Player)
+		srv.connecting = withoutID(srv.connecting, ev.SteamID)
+	}
+}
+
+// withPlayer adds or replaces a player, copying rather than writing through —
+// the slice may be shared with a snapshot already being rendered.
+func withPlayer(players []model.Player, p model.Player) []model.Player {
+	out := make([]model.Player, 0, len(players)+1)
+	replaced := false
+	for _, existing := range players {
+		if existing.Name == p.Name {
+			out = append(out, p)
+			replaced = true
+			continue
+		}
+		out = append(out, existing)
+	}
+	if !replaced {
+		out = append(out, p)
+	}
+	return out
+}
+
+// withoutPlayer removes by whichever identity the departure carried. Valheim's
+// only names the Steam id.
+func withoutPlayer(players []model.Player, steamID, name string) []model.Player {
+	out := make([]model.Player, 0, len(players))
+	for _, p := range players {
+		if steamID != "" && p.SteamID == steamID {
+			continue
+		}
+		if name != "" && p.Name == name {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+func withoutID(ids []string, id string) []string {
+	if id == "" {
+		return ids
+	}
+	out := make([]string, 0, len(ids))
+	for _, existing := range ids {
+		if existing != id {
+			out = append(out, existing)
+		}
+	}
+	return out
+}
+
+// appendConsole adds a line to the bounded tail, always allocating so a
+// snapshot already published keeps the slice it was given.
+func appendConsole(console []model.Event, ev model.Event) []model.Event {
+	if len(console) < maxConsole {
+		out := make([]model.Event, len(console)+1)
+		copy(out, console)
+		out[len(console)] = ev
+		return out
+	}
+	out := make([]model.Event, maxConsole)
+	copy(out, console[len(console)-maxConsole+1:])
+	out[maxConsole-1] = ev
+	return out
 }
 
 // OperationBegan marks a server busy. The fleet view redraws on the keystroke
