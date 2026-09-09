@@ -257,7 +257,10 @@ Reaching for a `switch` on a game's ID outside `internal/games` means a
 capability interface is missing. That is the smell that matters most.
 
 Full design — screens, keymap, pipelines, task engine, on-disk layout and
-risks — is in **[`docs/DESIGN.md`](docs/DESIGN.md)**.
+risks — is in **[`docs/DESIGN.md`](docs/DESIGN.md)**. The reasoning behind the
+decisions that are expensive to reverse, including what was rejected and how
+we would know each was wrong, is in
+**[`docs/decisions/`](docs/decisions/)**.
 
 ## Development
 
