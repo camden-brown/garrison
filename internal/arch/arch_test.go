@@ -39,11 +39,37 @@ var banned = map[string][]string{
 	"internal/tasks":    {"internal/core", "internal/tui", "cmd/"},
 	"internal/services": {"internal/core", "internal/tui", "cmd/"},
 	"internal/core":     {"internal/tui", "cmd/"},
+	"internal/tui":      {"cmd/"},
+}
+
+// bannedDirect is checked against direct imports only.
+//
+// The tui rule has to be direct: a view reaching for a host type is the smell
+// — one snapshot field short, and the next thing it reaches for is a call — but
+// tui -> core -> host is correct and unavoidable, because the store is exactly
+// the thing that translates what the engine reported into what a view renders.
+// Stating this transitively would ban the layering the design asks for.
+//
+// tui may import games. Capability gating is a type assertion on a game, which
+// is how the Mods view answers "Palworld has no mod system" itself instead of
+// leaking that knowledge into the shell.
+var bannedDirect = map[string][]string{
+	"internal/tui": {"internal/host"},
 }
 
 // mustFind names packages the walk has to discover. Without this the test
 // would pass silently if the walk ever broke and found nothing.
-var mustFind = []string{"cmd/garrison", "internal/games", "internal/host", "internal/model"}
+var mustFind = []string{
+	"cmd/garrison",
+	"internal/core",
+	"internal/games",
+	"internal/host",
+	"internal/host/docker",
+	"internal/model",
+	"internal/services/fleet",
+	"internal/tui",
+	"internal/tui/views/fleet",
+}
 
 func TestDependencyRule(t *testing.T) {
 	root := moduleRoot(t)
@@ -55,7 +81,10 @@ func TestDependencyRule(t *testing.T) {
 		}
 	}
 
-	for _, v := range violations(closure(direct)) {
+	for _, v := range violations(closure(direct), banned) {
+		t.Error(v)
+	}
+	for _, v := range violations(direct, bannedDirect) {
 		t.Error(v)
 	}
 }
@@ -69,17 +98,38 @@ func TestRuleCatchesViolation(t *testing.T) {
 		"internal/games": {"internal/host"},
 		"internal/host":  {"internal/tui"},
 		"internal/tui":   nil,
-	}))
+	}), banned)
 	if len(got) == 0 {
 		t.Fatal("expected the rule to reject internal/games -> internal/host -> internal/tui")
 	}
 }
 
-// violations reports every banned edge in a transitive dependency graph.
-func violations(deps map[string][]string) []string {
+// The direct rules need their own check, and they need the opposite property:
+// they must fire on a direct import and stay silent on a transitive one.
+func TestDirectRuleIgnoresTransitiveEdges(t *testing.T) {
+	viewImportsHost := map[string][]string{
+		"internal/tui/views/fleet": {"internal/host"},
+	}
+	if got := violations(viewImportsHost, bannedDirect); len(got) == 0 {
+		t.Error("expected the rule to reject a view importing internal/host directly")
+	}
+
+	// The layering the design actually asks for must not trip it.
+	viaCore := map[string][]string{
+		"internal/tui/views/fleet": {"internal/core"},
+		"internal/core":            {"internal/host"},
+	}
+	if got := violations(viaCore, bannedDirect); len(got) != 0 {
+		t.Errorf("tui -> core -> host was rejected, but it is the intended layering: %v", got)
+	}
+}
+
+// violations reports every edge in deps that rules forbids. The caller decides
+// whether deps is the direct graph or its transitive closure.
+func violations(deps map[string][]string, rules map[string][]string) []string {
 	var out []string
 	for pkg, ds := range deps {
-		for prefix, forbidden := range banned {
+		for prefix, forbidden := range rules {
 			if !strings.HasPrefix(pkg, prefix) {
 				continue
 			}

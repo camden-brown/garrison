@@ -20,3 +20,4 @@ colour choices are meant to be argued with and live in
 | [0004](0004-single-writer-store.md) | Exactly one writer, in `internal/core` | Accepted |
 | [0005](0005-arch-test-parses-sources.md) | The dependency rule is enforced by parsing sources, not `go list` | Accepted |
 | [0006](0006-valheim-first.md) | Valheim is the first game implemented | Accepted |
+| [0007](0007-services-and-store-meet-in-cmd.md) | Services and the store meet through interfaces, wired in `cmd` | Accepted |

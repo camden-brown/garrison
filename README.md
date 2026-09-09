@@ -19,8 +19,9 @@
 </p>
 
 <p align="center">
-  <sub><b>Design mockup, not a running build.</b> The architecture and plugin interfaces
-  are in place; the TUI is not implemented yet. See <a href="#roadmap">Roadmap</a>.</sub>
+  <sub><b>Design mockup.</b> M0 is built — the Docker driver, the store and a working
+  Fleet view with start/stop — so the servers table above is real; the tiles, attention
+  pane and activity feed arrive with M1. See <a href="#roadmap">Roadmap</a>.</sub>
 </p>
 
 ---
@@ -126,6 +127,17 @@ garrison status                   # one-line summary of every server
 garrison restart zomboid-main --drain 15m
 garrison backup zomboid-main --keep 14
 ```
+
+As of M0 the implemented commands are `garrison` (the Fleet view), `garrison
+status` and `garrison version`; the rest arrive with the task engine at M2.
+
+The Docker endpoint is resolved from, in order: `--docker-endpoint`,
+`GARRISON_DOCKER_HOST`, `DOCKER_HOST`, then the per-OS default
+(`npipe:////./pipe/docker_engine` on Windows, `unix:///var/run/docker.sock`
+elsewhere). `DOCKER_HOST` is honoured because a WSL2 shell or a rootless
+install has usually already set it correctly. A bare path is accepted and
+given a scheme, so `\\.\pipe\docker_engine` and `/var/run/docker.sock` both
+work as written.
 
 Every action in the TUI is also a subcommand, because the day you want one in
 Task Scheduler you will want it badly. The TUI and the CLI are peers over the
@@ -274,16 +286,27 @@ GOOS=windows GOARCH=amd64 go build ./cmd/garrison
 go test -tags integration ./...   # the one test that needs a real engine
 ```
 
-The suite is designed to run without Docker. Plugin functions are pure (table
-tests against captured log fixtures in `testdata/`), store mutations are
-reducers, task steps run against a fake `host.Driver`, and views get golden
-renders at 120×34 and 80×24 with the colour profile pinned.
+The suite runs without Docker. Plugin functions are pure (table tests against
+captured log fixtures in `testdata/`), store mutations are reducers, task steps
+run against the fake `host.Driver` in `internal/host/fake`, and views get
+golden renders at 120×34 and 80×24 with the colour profile pinned.
+
+One test needs a real engine and is kept behind a build tag, so it never runs
+by accident:
+
+```console
+go test -tags integration ./internal/host/docker
+```
+
+It creates a container from `alpine:3`, starts it, reads its logs and stats,
+execs into it, then stops and removes it — checking that the assumptions the
+fake encodes match the thing it stands in for.
 
 ## Roadmap
 
 | | Milestone | |
 | :-: | --- | --- |
-| **M0** | Driver and fleet list | `host.Driver` over the named pipe, the store, start/stop. Proves the pipe and the render loop on real hardware. |
+| **M0** ✅ | Driver and fleet list | `host.Driver` over the named pipe, the store, start/stop. Built; the named pipe and the render loop still need an hour on Windows hardware. |
 | **M1** | Live truth | Stats and log streaming, the dashboard with sparklines. First milestone worth leaving open. |
 | **M2** | Task engine | Lanes, steps, compensation, persistence. Restart and backup first, then update. Scheduler last. |
 | **M3** | Second game | Zomboid: two config syntaxes, RCON, Workshop mods with load order. Plus the settings form and apply diff. |

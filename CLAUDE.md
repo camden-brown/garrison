@@ -28,28 +28,53 @@ cheap; recovering lost reasoning is not.
 
 ## Current state
 
-Scaffold only: `model`, `games`, `host` interfaces, the registry, and the
-architecture test. **No Docker driver and no TUI yet.** `go run ./cmd/garrison`
-prints the version and the empty game registry.
+**M0 is built.** `go run ./cmd/garrison` opens a Fleet view over real
+containers; `garrison status` prints the same thing for a scheduled job.
 
-Next is **M0** — `host.Driver` with a Docker implementation over the named
-pipe, the store with its single writer, and a Fleet view that lists containers
-by label and can start and stop them. Roadmap is in the README; the reasoning
-for the ordering is in [ADR 0006](docs/decisions/0006-valheim-first.md).
+- `internal/host/docker` — the driver. Endpoint resolution handles npipe,
+  unix sockets and bare paths; stats compute CPU from deltas and subtract the
+  page cache; logs are demultiplexed unless the container has a TTY.
+- `internal/host/fake` — the fake driver. Everything above `host` is tested
+  against it, which is why the suite passes with Docker stopped.
+- `internal/core` — the store. Typed mutations, one writer, immutable
+  snapshots, conflating subscriptions.
+- `internal/services/fleet` — the poller and the start/stop controller. The
+  only place M0 does I/O.
+- `internal/tui` — the shell, the theme, the `View` contract; `views/fleet` is
+  the one screen, with golden renders at 120×34 and 80×24.
+
+**Not yet verified on Windows.** The named pipe and the render loop are the two
+things M0 exists to prove and neither can be proven from WSL — a unix socket
+exercises no npipe code, and colour-profile detection is a Windows problem.
+Build the `.exe` and leave it up for an hour before calling M0 done.
+
+Two M0 debts, both deliberate and both noted in the code: start/stop runs in a
+bare goroutine rather than a task (the engine is M2, and `OperationBegan` /
+`OperationEnded` are already the shape a task will emit), and the bind-mount
+measurement from `D:\` that the design asks for at M0 has not been taken.
+
+Next is **M1** — stats and logs into the three-tier rings, the Dashboard with
+sparklines, and Valheim behind the `Game` interface. Roadmap is in the README;
+the reasoning for the ordering is in
+[ADR 0006](docs/decisions/0006-valheim-first.md).
 
 ## Non-negotiables
 
 1. **The dependency rule.** `model` ← {`games`, `host`} ← {`tasks`,
    `services`} ← `core` ← {`tui`, `cmd`}. Never backwards. `games` must not
    import `host`: a plugin describes the container it wants and never builds
-   one. `internal/arch` enforces this — if it fails, fix the import, not the
+   one. A view must not import `host` *directly* — `tui` → `core` → `host` is
+   the intended layering, so that one rule is checked against direct imports
+   only. `internal/arch` enforces both — if it fails, fix the import, not the
    test.
 2. **No I/O above `services`.** If a view needs data it does not have, add a
    field to the snapshot and have a service populate it. Never add a call.
 3. **One writer.** All state changes go through `internal/core` as typed
    mutations named as past-tense facts (`PlayerJoined`, not `SetPlayers`). A
    `sync.Mutex` anywhere outside `internal/core` means concurrency is leaking
-   upward.
+   upward — the fake driver's is the one exception, and it says why. A service
+   never imports `core`: it declares the observer interface it needs and `cmd`
+   wires the store to it ([ADR 0007](docs/decisions/0007-services-and-store-meet-in-cmd.md)).
 4. **Views own cursor, scroll and filter. Nothing else.** Everything else lives
    in the store, so a view can be rebuilt on resize without losing anything.
 5. **Slower than one frame is a task.** No exceptions, including "this pull is
@@ -87,10 +112,11 @@ for the ordering is in [ADR 0006](docs/decisions/0006-valheim-first.md).
 
 ## Testing
 
-`go test ./...` must pass with Docker stopped. Plugin functions are pure (table
-tests, log fixtures in `testdata/`), store mutations are reducers, task steps
-run against a fake `host.Driver`, views get golden renders at 120×34 and 80×24
-with the colour profile pinned. Real-engine tests go behind
+`go test ./...` must pass with Docker stopped, and `go test -race ./...` too.
+Plugin functions are pure (table tests, log fixtures in `testdata/`), store
+mutations are reducers, task steps run against the fake `host.Driver` in
+`internal/host/fake`, views get golden renders at 120×34 and 80×24 with the
+colour profile pinned (`-update` rewrites them). Real-engine tests go behind
 `//go:build integration`.
 
 ## Conventions
