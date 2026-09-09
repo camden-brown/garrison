@@ -1,0 +1,19 @@
+FLEET                    3  STAGE
+  All servers            f
+✕ palworld-sat           —
+● valheim-huldra         1
+● zomboid-main           —
+
+VIEW        valheim-huldra
+  Dashboard              1
+  Console                2
+
+SCHEDULE
+  none until M2
+
+
+
+
+
+
+ FLEET   3 servers · 2 up · 1 down                                                 tab → servers  npipe · healthy  21:07

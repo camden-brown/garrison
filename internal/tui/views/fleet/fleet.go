@@ -15,16 +15,16 @@ import (
 	"github.com/camden-brown/garrison/internal/core"
 	"github.com/camden-brown/garrison/internal/model"
 	"github.com/camden-brown/garrison/internal/tui"
+	"github.com/camden-brown/garrison/internal/tui/comp"
 )
 
 // View lists the fleet.
 //
-// Cursor is the only state it owns. Everything drawn comes from the snapshot,
-// which is what lets the shell rebuild this on a resize without losing the
-// operator's place — and what makes a golden render a fixed snapshot in, a
-// fixed string out.
+// It owns only a pending confirmation. Which row is highlighted is the shell's
+// selection, arriving on the Frame: the rail and this table show the same
+// choice, and two cursors that can disagree about which server you are looking
+// at is a bug waiting for a busy evening.
 type View struct {
-	cursor  int
 	confirm string // instance awaiting a stop confirmation, empty when none
 }
 
@@ -51,14 +51,13 @@ func (v *View) Keys() []key.Binding {
 	return []key.Binding{keyUp, keyDown, keyStart, keyStop}
 }
 
-func (v *View) Update(msg tea.Msg, snap core.Snapshot) (tui.View, tea.Cmd) {
+func (v *View) Update(msg tea.Msg, f tui.Frame, snap core.Snapshot) (tui.View, tea.Cmd) {
 	msgKey, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return v, nil
 	}
-
 	next := *v
-	next.clampCursor(snap)
+	target := selectedOr(f.Server, snap)
 
 	// A pending confirmation swallows every other key. Answering it is the
 	// only thing the view will do until it is answered.
@@ -76,39 +75,58 @@ func (v *View) Update(msg tea.Msg, snap core.Snapshot) (tui.View, tea.Cmd) {
 
 	switch {
 	case key.Matches(msgKey, keyUp):
-		next.cursor--
+		return &next, tui.Select(neighbour(snap, target, -1))
 	case key.Matches(msgKey, keyDown):
-		next.cursor++
+		return &next, tui.Select(neighbour(snap, target, +1))
 	case key.Matches(msgKey, keyStart):
-		if srv, ok := next.selected(snap); ok {
-			return &next, tui.Action(core.OpStart, srv.Name)
+		if target != "" {
+			return &next, tui.Action(core.OpStart, target)
 		}
 	case key.Matches(msgKey, keyStop):
 		// Uppercase, so it confirms. Stopping is not world-losing and does
 		// not ask for the server's name typed out — that friction is
 		// reserved for the three actions that can destroy a save.
-		if srv, ok := next.selected(snap); ok {
-			next.confirm = srv.Name
+		if target != "" {
+			next.confirm = target
 		}
 	}
-	next.clampCursor(snap)
 	return &next, nil
 }
 
-func (v *View) clampCursor(snap core.Snapshot) {
-	if v.cursor >= len(snap.Servers) {
-		v.cursor = len(snap.Servers) - 1
+// selectedOr falls back to the first row when nothing is selected, so the
+// table always shows where a key press would land.
+func selectedOr(selected string, snap core.Snapshot) string {
+	if selected != "" {
+		return selected
 	}
-	if v.cursor < 0 {
-		v.cursor = 0
+	if len(snap.Servers) > 0 {
+		return snap.Servers[0].Name
 	}
+	return ""
 }
 
-func (v *View) selected(snap core.Snapshot) (core.Server, bool) {
-	if v.cursor < 0 || v.cursor >= len(snap.Servers) {
-		return core.Server{}, false
+// neighbour is the server delta rows from the named one, clamped. Moving in
+// the table moves the rail too, because they are one selection seen twice.
+func neighbour(snap core.Snapshot, from string, delta int) string {
+	if len(snap.Servers) == 0 {
+		return ""
 	}
-	return snap.Servers[v.cursor], true
+
+	i := 0
+	for n, srv := range snap.Servers {
+		if srv.Name == from {
+			i = n
+			break
+		}
+	}
+	i += delta
+	if i < 0 {
+		i = 0
+	}
+	if i >= len(snap.Servers) {
+		i = len(snap.Servers) - 1
+	}
+	return snap.Servers[i].Name
 }
 
 // columns is the width budget for one row, recomputed per frame.
@@ -149,15 +167,16 @@ func layout(width int) columns {
 
 // stateCell is the glyph and the word in one column, so the two can never
 // drift apart and the header only has to describe one field.
-func stateCell(t *tui.Theme, state model.State, width int) string {
+func stateCell(t *comp.Theme, state model.State, width int) string {
 	glyph := t.StateGlyph(state)
-	word := tui.Pad(t.StateWord(state), width-2)
+	word := comp.Pad(t.StateWord(state), width-2)
 	return t.StateStyle(state).Render(glyph + " " + word)
 }
 
 func (v *View) Render(f tui.Frame, snap core.Snapshot) string {
 	t := f.Theme
 	cols := layout(f.Width)
+	target := selectedOr(f.Server, snap)
 
 	var b strings.Builder
 	b.WriteString(t.Title.Render("SERVERS"))
@@ -179,8 +198,8 @@ func (v *View) Render(f tui.Frame, snap core.Snapshot) string {
 	b.WriteString(t.Header.Render(header(cols)))
 	b.WriteString("\n")
 
-	for i, srv := range snap.Servers {
-		b.WriteString(v.row(f, cols, srv, i == v.cursor))
+	for _, srv := range snap.Servers {
+		b.WriteString(v.row(f, cols, srv, srv.Name == target))
 		b.WriteString("\n")
 	}
 
@@ -192,7 +211,7 @@ func (v *View) Render(f tui.Frame, snap core.Snapshot) string {
 
 	if n := latestError(snap); n != "" {
 		b.WriteString("\n")
-		b.WriteString(t.Err.Render(tui.Truncate(n, f.Width)))
+		b.WriteString(t.Err.Render(comp.Truncate(n, f.Width)))
 		b.WriteString("\n")
 	}
 
@@ -209,19 +228,19 @@ func hints(confirming bool) string {
 func header(c columns) string {
 	var b strings.Builder
 	b.WriteString("  ")
-	b.WriteString(tui.Pad("NAME", c.name))
+	b.WriteString(comp.Pad("NAME", c.name))
 	b.WriteString(" ")
-	b.WriteString(tui.Pad("GAME", c.game))
+	b.WriteString(comp.Pad("GAME", c.game))
 	b.WriteString(" ")
-	b.WriteString(tui.Pad("STATE", c.state))
+	b.WriteString(comp.Pad("STATE", c.state))
 	b.WriteString(" ")
-	b.WriteString(tui.Pad("UPTIME", c.uptime))
+	b.WriteString(comp.Pad("UPTIME", c.uptime))
 	if c.ports > 0 {
 		b.WriteString(" ")
-		b.WriteString(tui.Pad("PORTS", c.ports))
+		b.WriteString(comp.Pad("PORTS", c.ports))
 	}
 	b.WriteString(" ")
-	b.WriteString(tui.Pad("NOTE", c.note))
+	b.WriteString(comp.Pad("NOTE", c.note))
 	return strings.TrimRight(b.String(), " ")
 }
 
@@ -236,7 +255,7 @@ func (v *View) row(f tui.Frame, c columns, srv core.Server, selected bool) strin
 		}
 	}
 
-	name := tui.Pad(srv.Name, c.name)
+	name := comp.Pad(srv.Name, c.name)
 	if selected {
 		name = t.Selected.Render(name)
 	}
@@ -245,16 +264,16 @@ func (v *View) row(f tui.Frame, c columns, srv core.Server, selected bool) strin
 	b.WriteString(cursor)
 	b.WriteString(name)
 	b.WriteString(" ")
-	b.WriteString(tui.Pad(srv.Game, c.game))
+	b.WriteString(comp.Pad(srv.Game, c.game))
 	b.WriteString(" ")
 	// State is glyph plus word, both of them, always. Colour is the third
 	// carrier and never the only one.
 	b.WriteString(stateCell(t, srv.State, c.state))
 	b.WriteString(" ")
-	b.WriteString(t.Dim.Render(tui.Pad(tui.Duration(srv.Uptime(f.Now)), c.uptime)))
+	b.WriteString(t.Dim.Render(comp.Pad(comp.Duration(srv.Uptime(f.Now)), c.uptime)))
 	if c.ports > 0 {
 		b.WriteString(" ")
-		b.WriteString(t.Dim.Render(tui.Pad(portList(srv.Ports), c.ports)))
+		b.WriteString(t.Dim.Render(comp.Pad(portList(srv.Ports), c.ports)))
 	}
 	b.WriteString(" ")
 	b.WriteString(noteCell(t, srv, c.note))
@@ -263,9 +282,9 @@ func (v *View) row(f tui.Frame, c columns, srv core.Server, selected bool) strin
 
 // noteCell is what the row has to say for itself: an operation in flight beats
 // a stale reason, because the operator just pressed the key that caused it.
-func noteCell(t *tui.Theme, srv core.Server, width int) string {
+func noteCell(t *comp.Theme, srv core.Server, width int) string {
 	if srv.Busy != core.OpNone {
-		return t.Accent.Render(tui.Pad(busyText(srv), width))
+		return t.Accent.Render(comp.Pad(busyText(srv), width))
 	}
 	if srv.Detail != "" {
 		style := t.Dim
@@ -279,12 +298,12 @@ func noteCell(t *tui.Theme, srv core.Server, width int) string {
 			// finished writing is a save you may not have.
 			style = t.Err
 		}
-		return style.Render(tui.Pad(srv.Detail, width))
+		return style.Render(comp.Pad(srv.Detail, width))
 	}
 	if !srv.Health.OK && srv.Health.Detail != "" {
-		return t.Err.Render(tui.Pad("unhealthy: "+srv.Health.Detail, width))
+		return t.Err.Render(comp.Pad("unhealthy: "+srv.Health.Detail, width))
 	}
-	return tui.Pad("", width)
+	return comp.Pad("", width)
 }
 
 // busyText says what is happening and, for a stop, how long it may take.
@@ -333,7 +352,7 @@ func engineBanner(e core.Engine) string {
 // emptyExplanation is the difference between a view that looks broken and one
 // that tells you what to do. An empty fleet has two causes and they need
 // different answers.
-func emptyExplanation(t *tui.Theme, snap core.Snapshot) string {
+func emptyExplanation(t *comp.Theme, snap core.Snapshot) string {
 	if !snap.Engine.OK {
 		return t.Dim.Render("Nothing to show until the engine answers.") + "\n" +
 			t.Dim.Render("Garrison keeps trying; it will fill in on its own.")

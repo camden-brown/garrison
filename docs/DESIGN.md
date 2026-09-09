@@ -244,12 +244,23 @@ So views implement one interface and register in a slice, exactly like games:
 type View interface {
     ID() ViewID
     Title() string
-    Keys() []key.Binding                              // help overlay + hints
+    Keys() []key.Binding                               // help overlay + hints
     Available(inst model.Instance) (bool, string)      // capability gate
-    Update(msg tea.Msg, snap core.Snapshot) (View, tea.Cmd)
+    Update(msg tea.Msg, f Frame, snap core.Snapshot) (View, tea.Cmd)
     Render(f Frame, snap core.Snapshot) string
 }
 ```
+
+`Update` takes the `Frame` as well as the message, which an earlier draft of
+this section left out. Without it a view has to stash the selected server
+during `Render` to use during `Update`, which works only because Bubble Tea
+happens to render before every update — an ordering nothing states and one
+refactor could break, leaving a view acting on a stale selection.
+
+The `Frame` also carries the selected server and whether the stage has focus.
+Selection belongs to the shell rather than to each view: the rail and the stage
+show the same choice, and two cursors that can disagree about which server you
+are looking at is a bug waiting for a busy evening.
 
 `Available` is the piece that matters: the Mods view itself returns
 `(false, "Palworld has no mod system")`, so no capability knowledge leaks into

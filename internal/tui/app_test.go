@@ -2,6 +2,9 @@ package tui_test
 
 import (
 	"context"
+	"flag"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -15,11 +18,14 @@ import (
 	"github.com/camden-brown/garrison/internal/host"
 	"github.com/camden-brown/garrison/internal/model"
 	"github.com/camden-brown/garrison/internal/tui"
+	"github.com/camden-brown/garrison/internal/tui/comp"
 )
+
+var update = flag.Bool("update", false, "rewrite the .golden files")
 
 func TestMain(m *testing.M) {
 	lipgloss.SetColorProfile(termenv.Ascii)
-	m.Run()
+	os.Exit(m.Run())
 }
 
 var now = time.Date(2026, 9, 9, 21, 7, 0, 0, time.UTC)
@@ -55,7 +61,7 @@ func (v *stubView) Title() string                           { return "Stub" }
 func (v *stubView) Keys() []key.Binding                     { return nil }
 func (v *stubView) Available(model.Instance) (bool, string) { return true, "" }
 
-func (v *stubView) Update(msg tea.Msg, _ core.Snapshot) (tui.View, tea.Cmd) {
+func (v *stubView) Update(msg tea.Msg, _ tui.Frame, _ core.Snapshot) (tui.View, tea.Cmd) {
 	return v, v.emit
 }
 
@@ -77,7 +83,7 @@ func snapshot() core.Snapshot {
 
 func newApp(t *testing.T, store tui.Store, v tui.View) *tui.App {
 	t.Helper()
-	app := tui.NewApp(context.Background(), store, tui.NewTheme(false), v)
+	app := tui.NewApp(context.Background(), store, comp.NewTheme(false), v)
 	app.Update(tea.WindowSizeMsg{Width: 120, Height: 34})
 	return app
 }
@@ -109,17 +115,98 @@ func TestStatusBarSaysUnreachableRatherThanNothing(t *testing.T) {
 	}
 }
 
-// The stage gets the terminal minus the status bar. A view told it has the
-// whole height draws a row underneath the bar and the bar scrolls away.
-func TestTheViewIsGivenRoomForTheStatusBar(t *testing.T) {
+// The stage gets the terminal minus the rail and the status bar. A view told
+// it has the whole width draws under the rail; told it has the whole height,
+// it pushes the bar off the bottom.
+func TestTheStageIsToldItsRealSize(t *testing.T) {
 	v := &stubView{}
 	newApp(t, newStub(snapshot()), v).View()
 
-	if v.rendered.Width != 120 {
-		t.Errorf("frame width = %d, want 120", v.rendered.Width)
+	if want := 120 - comp.RailWidth - 2; v.rendered.Width != want {
+		t.Errorf("frame width = %d, want %d — the terminal minus the rail", v.rendered.Width, want)
 	}
 	if v.rendered.Height >= 34 {
 		t.Errorf("frame height = %d, want less than the terminal's 34", v.rendered.Height)
+	}
+}
+
+// Under about 100 columns the rail costs more than it gives, so it goes and
+// the stage gets everything.
+func TestTheRailIsDroppedWhenTheTerminalIsNarrow(t *testing.T) {
+	v := &stubView{}
+	app := tui.NewApp(context.Background(), newStub(snapshot()), comp.NewTheme(false), v)
+	app.Update(tea.WindowSizeMsg{Width: 70, Height: 24})
+	app.View()
+
+	if v.rendered.Width != 70 {
+		t.Errorf("frame width = %d, want the whole 70", v.rendered.Width)
+	}
+}
+
+// Tab cycles three stops in a fixed order, and the status bar says which is
+// next — a three-way cycle is not guessable by looking at it.
+func TestTabCyclesFocusAndSaysWhatIsNext(t *testing.T) {
+	app := newApp(t, newStub(snapshot()), &stubView{})
+
+	want := []string{"tab → servers", "tab → views", "tab → stage", "tab → servers"}
+	for i, hint := range want {
+		if got := app.View(); !strings.Contains(got, hint) {
+			t.Fatalf("step %d: status bar does not say %q", i, hint)
+		}
+		app.Update(tea.KeyMsg{Type: tea.KeyTab})
+	}
+}
+
+// Selection belongs to the shell, so moving in the rail changes what a
+// per-server view is about.
+func TestRailSelectionDrivesTheStage(t *testing.T) {
+	v := &stubView{}
+	app := newApp(t, newStub(snapshot()), v)
+
+	app.Update(tea.KeyMsg{Type: tea.KeyTab})                       // focus servers
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")}) // first server
+	app.View()
+
+	if v.rendered.Server != "a" {
+		t.Errorf("stage was told server %q, want the rail's selection", v.rendered.Server)
+	}
+}
+
+// A view asking for a different server must move the rail too, because they
+// are one selection seen twice.
+func TestSelectMsgMovesTheRail(t *testing.T) {
+	v := &stubView{}
+	app := newApp(t, newStub(snapshot()), v)
+
+	app.Update(tui.SelectMsg{Server: "c"})
+	app.View()
+
+	if v.rendered.Server != "c" {
+		t.Errorf("stage was told server %q, want c", v.rendered.Server)
+	}
+}
+
+// The fleet changes every five seconds. A rail pointing at a container that
+// has gone would send every subsequent action nowhere.
+func TestSelectionIsDroppedWhenTheServerVanishes(t *testing.T) {
+	v := &stubView{}
+	store := newStub(snapshot())
+	app := newApp(t, store, v)
+
+	// Drive the real subscription rather than fabricating the shell's own
+	// message type, so this exercises the path a live store takes.
+	cmd := app.Init()
+	app.Update(tui.SelectMsg{Server: "c"})
+
+	store.ch <- core.Reduce(core.Snapshot{Engine: core.Engine{OK: true}},
+		core.FleetObserved{At: now, Containers: []host.Container{
+			{Instance: "a", State: model.StateRunning},
+		}})
+	app.Update(cmd())
+	app.View()
+
+	if v.rendered.Server != "" {
+		t.Errorf("stage was told server %q, want the stale selection dropped", v.rendered.Server)
 	}
 }
 
@@ -148,7 +235,7 @@ func TestTheShellDispatchesViewActions(t *testing.T) {
 func TestViewSwitching(t *testing.T) {
 	first := &namedView{id: tui.ViewFleet, title: "Fleet"}
 	second := &namedView{id: tui.ViewDashboard, title: "Dashboard"}
-	app := tui.NewApp(context.Background(), newStub(snapshot()), tui.NewTheme(false), first, second)
+	app := tui.NewApp(context.Background(), newStub(snapshot()), comp.NewTheme(false), first, second)
 	app.Update(tea.WindowSizeMsg{Width: 120, Height: 34})
 
 	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1")})
@@ -166,7 +253,7 @@ func TestViewSwitching(t *testing.T) {
 // keymap and the registry are edited separately and will drift.
 func TestSwitchingToAnUnregisteredViewIsIgnored(t *testing.T) {
 	only := &namedView{id: tui.ViewFleet, title: "Fleet"}
-	app := tui.NewApp(context.Background(), newStub(snapshot()), tui.NewTheme(false), only)
+	app := tui.NewApp(context.Background(), newStub(snapshot()), comp.NewTheme(false), only)
 	app.Update(tea.WindowSizeMsg{Width: 120, Height: 34})
 
 	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1")})
@@ -184,7 +271,7 @@ type namedView struct {
 
 func (v *namedView) ID() tui.ViewID { return v.id }
 func (v *namedView) Title() string  { return v.title }
-func (v *namedView) Update(msg tea.Msg, s core.Snapshot) (tui.View, tea.Cmd) {
+func (v *namedView) Update(msg tea.Msg, f tui.Frame, s core.Snapshot) (tui.View, tea.Cmd) {
 	return v, nil
 }
 
@@ -220,7 +307,7 @@ func TestShellQuitsWhenTheStoreShutsDown(t *testing.T) {
 	store := newStub(snapshot())
 	close(store.ch)
 
-	app2 := tui.NewApp(context.Background(), store, tui.NewTheme(false), &stubView{})
+	app2 := tui.NewApp(context.Background(), store, comp.NewTheme(false), &stubView{})
 	cmd := app2.Init()
 	_, quit := app2.Update(cmd())
 	if quit == nil {
@@ -229,4 +316,69 @@ func TestShellQuitsWhenTheStoreShutsDown(t *testing.T) {
 	if _, ok := quit().(tea.QuitMsg); !ok {
 		t.Error("the shell did not stop when its store went away")
 	}
+}
+
+// The whole shell in one render: rail, stage and status bar together. The
+// pieces have their own tests; this is the one that catches them not fitting
+// beside each other.
+func TestShellGolden(t *testing.T) {
+	views := []tui.View{
+		&namedView{id: tui.ViewFleet, title: "Fleet"},
+		&namedView{id: tui.ViewDashboard, title: "Dashboard"},
+		&namedView{id: tui.ViewConsole, title: "Console"},
+	}
+
+	app := tui.NewApp(context.Background(), newStub(populated()), comp.NewTheme(false), views...)
+	app.Now = func() time.Time { return now }
+	app.Update(tea.WindowSizeMsg{Width: 120, Height: 20})
+	app.Update(tui.SelectMsg{Server: "valheim-huldra"})
+
+	got := app.View()
+	golden := filepath.Join("testdata", "shell.golden")
+
+	if *update {
+		if err := os.WriteFile(golden, []byte(got), 0o644); err != nil {
+			t.Fatalf("writing golden: %v", err)
+		}
+		return
+	}
+	want, err := os.ReadFile(golden)
+	if err != nil {
+		t.Fatalf("reading golden (run with -update to create): %v", err)
+	}
+	if got != string(want) {
+		t.Errorf("shell render differs from %s\n--- got ---\n%s\n--- want ---\n%s", golden, got, want)
+	}
+}
+
+// Nothing may overflow the terminal. The rail and the stage are joined
+// horizontally, so a stage one column too wide pushes the whole thing over.
+func TestShellNeverExceedsTheTerminal(t *testing.T) {
+	for _, width := range []int{80, 100, 120, 160} {
+		app := tui.NewApp(context.Background(), newStub(populated()), comp.NewTheme(false),
+			&namedView{id: tui.ViewFleet, title: "Fleet"})
+		app.Now = func() time.Time { return now }
+		app.Update(tea.WindowSizeMsg{Width: width, Height: 24})
+
+		for i, line := range strings.Split(app.View(), "\n") {
+			if w := lipgloss.Width(line); w > width {
+				t.Errorf("width %d: line %d is %d cells:\n%q", width, i, w, line)
+			}
+		}
+	}
+}
+
+func populated() core.Snapshot {
+	s := core.Reduce(
+		core.Snapshot{Engine: core.Engine{Transport: "npipe"}},
+		core.FleetObserved{At: now, Containers: []host.Container{
+			{Instance: "valheim-huldra", Game: "valheim", State: model.StateRunning, Started: now.Add(-59 * time.Hour)},
+			{Instance: "zomboid-main", Game: "zomboid", State: model.StateRunning, Started: now.Add(-3 * time.Hour)},
+			{Instance: "palworld-sat", Game: "palworld", State: model.StateCrashed, Detail: "OOM killed"},
+		}},
+	)
+	return core.Reduce(s, core.LogEventsRead{At: now, Server: "valheim-huldra", Events: []model.Event{
+		{Kind: model.KindConnect, At: now, SteamID: "76561190000000001"},
+		{Kind: model.KindJoin, At: now, Player: "Dalinar", Text: "Dalinar joined"},
+	}})
 }

@@ -1,10 +1,4 @@
-// Package tui is Garrison's terminal interface: the shell, the theme, and the
-// view contract every screen implements.
-//
-// Nothing here calls Docker or holds a lock. A view is a pure function of a
-// core.Snapshot, which is what makes a golden render test possible and what
-// stops a slow engine from stalling a frame.
-package tui
+package comp
 
 import (
 	"os"

@@ -16,6 +16,7 @@ import (
 	"github.com/camden-brown/garrison/internal/host"
 	"github.com/camden-brown/garrison/internal/model"
 	"github.com/camden-brown/garrison/internal/tui"
+	"github.com/camden-brown/garrison/internal/tui/comp"
 	"github.com/camden-brown/garrison/internal/tui/views/dashboard"
 )
 
@@ -84,7 +85,7 @@ func populated() core.Snapshot {
 
 func render(t *testing.T, v tui.View, snap core.Snapshot, w, h int) string {
 	t.Helper()
-	return v.Render(tui.Frame{Width: w, Height: h, Theme: tui.NewTheme(false), Now: now}, snap)
+	return v.Render(tui.Frame{Width: w, Height: h, Theme: comp.NewTheme(false), Now: now}, snap)
 }
 
 func TestGoldenRenders(t *testing.T) {
@@ -152,7 +153,7 @@ func TestCursorSurvivesTheFleetShrinking(t *testing.T) {
 	full := populated()
 
 	for i := 0; i < 5; i++ {
-		v, _ = v.Update(tea.KeyMsg{Type: tea.KeyRight}, full)
+		v, _ = v.Update(tea.KeyMsg{Type: tea.KeyRight}, frameFor(full), full)
 	}
 
 	shrunk := core.Reduce(core.Snapshot{Engine: core.Engine{OK: true}},
@@ -172,4 +173,12 @@ func TestEmptyFleetSaysSo(t *testing.T) {
 	if strings.TrimSpace(out) == "" {
 		t.Error("an empty fleet rendered nothing at all")
 	}
+}
+
+func frameFor(snap core.Snapshot) tui.Frame {
+	f := tui.Frame{Width: 92, Height: 34, Theme: comp.NewTheme(false), Now: now, Focused: true}
+	if len(snap.Servers) > 0 {
+		f.Server = snap.Servers[0].Name
+	}
+	return f
 }

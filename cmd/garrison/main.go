@@ -31,6 +31,7 @@ import (
 	"github.com/camden-brown/garrison/internal/services/logs"
 	"github.com/camden-brown/garrison/internal/services/metrics"
 	"github.com/camden-brown/garrison/internal/tui"
+	"github.com/camden-brown/garrison/internal/tui/comp"
 	viewsall "github.com/camden-brown/garrison/internal/tui/views/all"
 
 	// Registers every game. Adding one is a line in that package.
@@ -183,8 +184,8 @@ func runTUI(endpoint string, interval time.Duration, ascii bool) error {
 		return err
 	}
 
-	tui.ColorFromEnv()
-	app := tui.NewApp(ctx, store, tui.NewTheme(ascii), viewsall.Views()...)
+	comp.ColorFromEnv()
+	app := tui.NewApp(ctx, store, comp.NewTheme(ascii), viewsall.Views()...)
 
 	_, err = tea.NewProgram(app, tea.WithAltScreen(), tea.WithContext(ctx)).Run()
 
@@ -242,7 +243,7 @@ func printStatus(snap core.Snapshot) {
 	now := time.Now()
 	for _, srv := range snap.Servers {
 		line := fmt.Sprintf("%-24s %-10s %-10s %s",
-			srv.Name, srv.Game, srv.State, tui.Duration(srv.Uptime(now)))
+			srv.Name, srv.Game, srv.State, comp.Duration(srv.Uptime(now)))
 		if srv.Detail != "" {
 			line += "  " + srv.Detail
 		}

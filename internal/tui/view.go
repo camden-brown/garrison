@@ -8,6 +8,7 @@ import (
 
 	"github.com/camden-brown/garrison/internal/core"
 	"github.com/camden-brown/garrison/internal/model"
+	"github.com/camden-brown/garrison/internal/tui/comp"
 )
 
 // ViewID identifies a screen. It is the value the rail, the number keys and
@@ -15,9 +16,17 @@ import (
 // else.
 type ViewID string
 
+// The nine screens from DESIGN §3. The order here is the rail order and the
+// number keys, so it is declared once and everything derives from it.
 const (
 	ViewFleet     ViewID = "fleet"
 	ViewDashboard ViewID = "dashboard"
+	ViewConsole   ViewID = "console"
+	ViewPlayers   ViewID = "players"
+	ViewMods      ViewID = "mods"
+	ViewSettings  ViewID = "settings"
+	ViewTasks     ViewID = "tasks"
+	ViewBackups   ViewID = "backups"
 )
 
 // View is the contract every screen implements.
@@ -48,7 +57,13 @@ type View interface {
 	// selected server's.
 	Available(inst model.Instance) (bool, string)
 
-	Update(msg tea.Msg, snap core.Snapshot) (View, tea.Cmd)
+	// Update takes the Frame as well as the message, so a view never has to
+	// remember what it was last told. DESIGN §7 writes this without the
+	// Frame; that version only works because Bubble Tea happens to render
+	// before every Update, and a view that stashes the selection during
+	// Render to use during Update is one refactor away from acting on a
+	// stale one.
+	Update(msg tea.Msg, f Frame, snap core.Snapshot) (View, tea.Cmd)
 	Render(f Frame, snap core.Snapshot) string
 }
 
@@ -58,8 +73,19 @@ type View interface {
 type Frame struct {
 	Width  int
 	Height int
-	Theme  *Theme
+	Theme  *comp.Theme
 	Now    time.Time
+
+	// Server is the instance the rail has selected, empty when the fleet is.
+	// Selection belongs to the shell rather than to each view: the rail and
+	// the stage both show it, and two cursors that can disagree about which
+	// server you are looking at is a bug waiting for a busy evening.
+	Server string
+
+	// Focused says whether the stage has keyboard focus. A view draws its
+	// own cursor differently when the rail has it, so it is always clear
+	// which set of arrow keys you are pressing.
+	Focused bool
 }
 
 // ActionMsg is a view asking for something to happen. Views never hold the
@@ -73,4 +99,14 @@ type ActionMsg struct {
 // Action returns a tea.Cmd that emits an ActionMsg.
 func Action(op core.Op, server string) tea.Cmd {
 	return func() tea.Msg { return ActionMsg{Op: op, Server: server} }
+}
+
+// SelectMsg is a view asking the shell to select a different server. The
+// Fleet table and the rail's server list are the same selection seen twice, so
+// moving in either has to move both.
+type SelectMsg struct{ Server string }
+
+// Select returns a tea.Cmd that emits a SelectMsg.
+func Select(server string) tea.Cmd {
+	return func() tea.Msg { return SelectMsg{Server: server} }
 }

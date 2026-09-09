@@ -11,11 +11,11 @@ import (
 
 	"github.com/camden-brown/garrison/internal/core"
 	"github.com/camden-brown/garrison/internal/model"
+	"github.com/camden-brown/garrison/internal/tui/comp"
 )
 
 // Store is what the shell needs from internal/core. It is an interface so the
-// app can be driven by a stub in a test without standing up a writer
-// goroutine.
+// app can be driven by a stub in a test without standing up a writer goroutine.
 type Store interface {
 	Subscribe() <-chan core.Snapshot
 	Snapshot() core.Snapshot
@@ -23,39 +23,62 @@ type Store interface {
 	Stop(ctx context.Context, instance string)
 }
 
-// App is the shell: it owns the terminal, routes keys to the current view, and
-// turns a view's ActionMsg into a call on the store.
+// railThreshold is the width below which the rail is dropped.
+const railThreshold = 100
+
+// App is the shell: the rail, the stage, and the status bar.
 //
-// It contains no per-screen knowledge. Everything a screen does is behind the
-// View interface, so adding one does not touch this file.
+// It owns navigation — which server, which view, where the keys go — and
+// nothing else. Every screen is behind the View interface, so adding one does
+// not touch this file.
 type App struct {
 	store  Store
 	ctx    context.Context
 	views  []View
 	active int
 
+	// selected is the instance the rail points at, empty for the fleet
+	// entry. It lives here rather than in each view because the rail and
+	// the stage show the same selection, and two cursors that can disagree
+	// about which server you are looking at is a bug waiting for a busy
+	// evening.
+	selected string
+	focus    comp.Focus
+
 	snap   core.Snapshot
 	sub    <-chan core.Snapshot
-	theme  *Theme
+	theme  *comp.Theme
 	width  int
 	height int
-	now    func() time.Time
+
+	// Now is the clock, exported so a golden render can pin it. The status
+	// bar shows a time, and a golden that moves every minute is a golden
+	// nobody trusts.
+	Now func() time.Time
 }
 
 // NewApp builds the shell over a store and a set of views.
-func NewApp(ctx context.Context, store Store, theme *Theme, views ...View) *App {
+func NewApp(ctx context.Context, store Store, theme *comp.Theme, views ...View) *App {
 	return &App{
 		store: store,
 		ctx:   ctx,
 		views: views,
 		theme: theme,
 		snap:  store.Snapshot(),
+		focus: comp.FocusStage,
 		// A sane size before the first WindowSizeMsg arrives, so the very
 		// first frame is not rendered into a zero-width terminal.
 		width:  120,
 		height: 34,
-		now:    time.Now,
+		Now:    time.Now,
 	}
+}
+
+func (a *App) clock() time.Time {
+	if a.Now != nil {
+		return a.Now()
+	}
+	return time.Now()
 }
 
 func (a *App) Init() tea.Cmd {
@@ -91,29 +114,138 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, tea.Quit
 		}
 		a.snap = msg.snap
+		a.pruneSelection()
 		return a, waitForSnapshot(a.sub)
 
 	case ActionMsg:
 		return a, a.dispatch(msg)
 
+	case SelectMsg:
+		a.selected = msg.Server
+		return a, nil
+
 	case tea.KeyMsg:
-		switch k := msg.String(); k {
-		case "ctrl+c", "q":
-			return a, tea.Quit
-		case "f":
-			a.show(ViewFleet)
-			return a, nil
-		case "1":
-			a.show(ViewDashboard)
-			return a, nil
-		case "tab":
-			a.active = (a.active + 1) % len(a.views)
-			return a, nil
-		}
-		return a.routeToView(msg)
+		return a.key(msg)
 	}
 
 	return a.routeToView(msg)
+}
+
+// pruneSelection drops a selection whose server has gone. The fleet changes
+// every five seconds and a rail pointing at a container that no longer exists
+// would send every subsequent action nowhere.
+func (a *App) pruneSelection() {
+	if a.selected == "" {
+		return
+	}
+	if _, ok := a.snap.Server(a.selected); !ok {
+		a.selected = ""
+	}
+}
+
+func (a *App) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch k := msg.String(); k {
+	case "ctrl+c", "q":
+		return a, tea.Quit
+
+	case "tab":
+		// Three stops, always in the same order, so the cycle is
+		// predictable without looking: which server, which view, the view.
+		a.focus = (a.focus + 1) % 3
+		return a, nil
+
+	case "f":
+		a.selected = ""
+		a.show(ViewFleet)
+		return a, nil
+
+	case "1", "2", "3", "4", "5", "6", "7":
+		// The number keys jump to a view of the current server and never
+		// change meaning, so they are an index into the registry rather
+		// than a lookup by id.
+		n, _ := strconv.Atoi(k)
+		if n < len(a.views) {
+			a.active = n
+			a.ensureServerSelected()
+		}
+		return a, nil
+	}
+
+	// Arrow keys belong to whichever list has focus.
+	if a.focus == comp.FocusServers {
+		if cmd, handled := a.moveServer(msg); handled {
+			return a, cmd
+		}
+	}
+	if a.focus == comp.FocusViews {
+		if handled := a.moveView(msg); handled {
+			return a, nil
+		}
+	}
+	return a.routeToView(msg)
+}
+
+// ensureServerSelected picks one when a per-server view is opened from the
+// fleet entry, so the screen has something to be about.
+func (a *App) ensureServerSelected() {
+	if a.selected != "" || len(a.snap.Servers) == 0 {
+		return
+	}
+	a.selected = a.snap.Servers[0].Name
+}
+
+func (a *App) moveServer(msg tea.KeyMsg) (tea.Cmd, bool) {
+	delta := 0
+	switch msg.String() {
+	case "up", "k":
+		delta = -1
+	case "down", "j":
+		delta = 1
+	default:
+		return nil, false
+	}
+
+	// The fleet entry sits above the servers as index -1, so moving up from
+	// the first server lands on "All servers" rather than sticking.
+	i := -1
+	for n, srv := range a.snap.Servers {
+		if srv.Name == a.selected {
+			i = n
+			break
+		}
+	}
+
+	i += delta
+	if i < -1 {
+		i = -1
+	}
+	if i >= len(a.snap.Servers) {
+		i = len(a.snap.Servers) - 1
+	}
+	if i < 0 {
+		a.selected = ""
+		a.show(ViewFleet)
+		return nil, true
+	}
+	a.selected = a.snap.Servers[i].Name
+	return nil, true
+}
+
+func (a *App) moveView(msg tea.KeyMsg) bool {
+	switch msg.String() {
+	case "up", "k":
+		if a.active > 0 {
+			a.active--
+		}
+	case "down", "j":
+		if a.active < len(a.views)-1 {
+			a.active++
+		}
+	default:
+		return false
+	}
+	a.ensureServerSelected()
+	return true
 }
 
 // show switches to a view by id. Unknown ids are ignored rather than
@@ -132,9 +264,26 @@ func (a *App) routeToView(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if len(a.views) == 0 {
 		return a, nil
 	}
-	next, cmd := a.views[a.active].Update(msg, a.snap)
+	next, cmd := a.views[a.active].Update(msg, a.frame(), a.snap)
 	a.views[a.active] = next
 	return a, cmd
+}
+
+// frame is what the active view is told about its surroundings. Update and
+// Render get the same one, so a view never has to remember anything.
+func (a *App) frame() Frame {
+	width := a.width
+	if a.width >= railThreshold {
+		width = a.width - comp.RailWidth - 2
+	}
+	return Frame{
+		Width:   width,
+		Height:  a.height - 2,
+		Theme:   a.theme,
+		Now:     a.clock(),
+		Server:  a.selected,
+		Focused: a.focus == comp.FocusStage,
+	}
 }
 
 // dispatch turns a view's request into work. This is the only place the shell
@@ -155,22 +304,104 @@ func (a *App) View() string {
 		return "no views registered\n"
 	}
 
-	view := a.views[a.active]
-	// One line of status bar, one blank line above it.
-	stage := Frame{
-		Width:  a.width,
-		Height: a.height - 2,
-		Theme:  a.theme,
-		Now:    a.now(),
+	// One status bar, and one blank line above it.
+	body := a.height - 2
+
+	// Under 100 columns the rail collapses and navigation moves entirely to
+	// the keys, per DESIGN §3. A 26-column rail beside a 70-column terminal
+	// leaves the stage too narrow to hold the fleet table, and every view
+	// has a real narrow layout rather than a clipped wide one.
+	rail, stageWidth := "", a.width
+	if a.width >= railThreshold {
+		rail = a.rail(body)
+		stageWidth = a.width - comp.RailWidth - 2
 	}
 
-	body := view.Render(stage, a.snap)
-	return body + "\n" + a.statusBar()
+	f := a.frame()
+	f.Width, f.Height = stageWidth, body
+	stage := a.views[a.active].Render(f, a.snap)
+
+	view := stage
+	if rail != "" {
+		view = lipgloss.JoinHorizontal(lipgloss.Top, rail, "  ", clamp(stage, stageWidth, body))
+	}
+	// Joining pads the shorter column to match the taller one, which leaves
+	// trailing spaces on most rows. They are invisible until somebody drags
+	// a selection across the terminal and copies a block of whitespace.
+	return trimRight(view) + "\n" + a.statusBar()
+}
+
+func (a *App) rail(height int) string {
+	entries := make([]comp.RailEntry, 0, len(a.views))
+	inst := a.instance()
+
+	for i, v := range a.views {
+		if v.ID() == ViewFleet {
+			continue // the fleet has its own entry above the server list
+		}
+		_, reason := v.Available(inst)
+		entries = append(entries, comp.RailEntry{
+			Title:  v.Title(),
+			Key:    strconv.Itoa(i),
+			Reason: reason,
+		})
+	}
+
+	// The fleet has its own entry above the server list rather than a line
+	// in the view list, so nothing in the view list is current while it is
+	// showing. Highlighting Dashboard there would claim you are somewhere
+	// you are not.
+	active := a.active - 1
+
+	return comp.Rail{
+		Theme:    a.theme,
+		Height:   height,
+		Servers:  a.snap.Servers,
+		Selected: a.selected,
+		Entries:  entries,
+		Active:   active,
+		Focus:    a.focus,
+	}.Render()
+}
+
+// instance is the selected server as a model.Instance, which is what a view's
+// Available takes. Until the config file lands, name and game are all Garrison
+// knows — both come off the container's labels.
+func (a *App) instance() model.Instance {
+	srv, ok := a.snap.Server(a.selected)
+	if !ok {
+		return model.Instance{}
+	}
+	return model.Instance{Name: srv.Name, Game: srv.Game}
+}
+
+// trimRight removes trailing spaces from every line.
+func trimRight(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimRight(line, " ")
+	}
+	return strings.Join(lines, "\n")
+}
+
+// clamp trims a rendered stage to its box, so a view that draws one line too
+// many cannot push the status bar off the bottom.
+func clamp(s string, width, height int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	for i, line := range lines {
+		if lipgloss.Width(line) > width {
+			lines[i] = comp.Truncate(line, width)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // statusBar never changes position. It is the one thing on screen whose
 // location you can rely on, so it carries the facts you look for without
-// reading: fleet health, engine state, the clock.
+// reading: which screen, fleet health, engine state, the clock.
 func (a *App) statusBar() string {
 	t := a.theme
 	up, down, unknown := a.snap.Counts()
@@ -191,7 +422,7 @@ func (a *App) statusBar() string {
 		left += " · " + t.StateStyle(model.StateUnknown).Render(strconv.Itoa(unknown)+" unknown")
 	}
 
-	right := a.engineWord() + "  " + a.now().Format("15:04")
+	right := t.Dim.Render(focusHint(a.focus)) + "  " + a.engineWord() + "  " + a.clock().Format("15:04")
 
 	// Width, not len: both halves already carry escape sequences.
 	gap := a.width - lipgloss.Width(left) - lipgloss.Width(right)
@@ -199,6 +430,18 @@ func (a *App) statusBar() string {
 		gap = 1
 	}
 	return left + strings.Repeat(" ", gap) + right
+}
+
+// focusHint says what Tab will do next, because a three-way cycle is not
+// guessable from looking at it.
+func focusHint(f comp.Focus) string {
+	switch f {
+	case comp.FocusServers:
+		return "tab → views"
+	case comp.FocusViews:
+		return "tab → stage"
+	}
+	return "tab → servers"
 }
 
 func (a *App) engineWord() string {

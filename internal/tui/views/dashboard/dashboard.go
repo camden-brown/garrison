@@ -22,12 +22,9 @@ import (
 
 // View renders one server.
 //
-// It owns which server is selected and nothing else. The server is an index
-// rather than a name so the view survives a rename, and it is clamped on every
-// render because the fleet changes underneath it every five seconds.
-type View struct {
-	cursor int
-}
+// It owns nothing. Which server it is about arrives on the Frame, because the
+// rail and the stage are looking at the same selection.
+type View struct{}
 
 func New() *View { return &View{} }
 
@@ -45,48 +42,62 @@ var (
 
 func (v *View) Keys() []key.Binding { return []key.Binding{keyPrev, keyNext} }
 
-func (v *View) Update(msg tea.Msg, snap core.Snapshot) (tui.View, tea.Cmd) {
+func (v *View) Update(msg tea.Msg, f tui.Frame, snap core.Snapshot) (tui.View, tea.Cmd) {
 	msgKey, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return v, nil
 	}
 
-	next := *v
 	switch {
 	case key.Matches(msgKey, keyPrev):
-		next.cursor--
+		return v, tui.Select(step(snap, f.Server, -1))
 	case key.Matches(msgKey, keyNext):
-		next.cursor++
+		return v, tui.Select(step(snap, f.Server, +1))
 	}
-	next.clamp(snap)
-	return &next, nil
+	return v, nil
 }
 
-func (v *View) clamp(snap core.Snapshot) {
-	if v.cursor >= len(snap.Servers) {
-		v.cursor = len(snap.Servers) - 1
+// step is the server delta places from the named one, clamped.
+func step(snap core.Snapshot, from string, delta int) string {
+	if len(snap.Servers) == 0 {
+		return ""
 	}
-	if v.cursor < 0 {
-		v.cursor = 0
+	i := 0
+	for n, srv := range snap.Servers {
+		if srv.Name == from {
+			i = n
+			break
+		}
 	}
+	i += delta
+	if i < 0 {
+		i = 0
+	}
+	if i >= len(snap.Servers) {
+		i = len(snap.Servers) - 1
+	}
+	return snap.Servers[i].Name
 }
 
 func (v *View) Render(f tui.Frame, snap core.Snapshot) string {
 	t := f.Theme
-	v.clamp(snap)
 
 	if len(snap.Servers) == 0 {
 		return t.Dim.Render("No servers to show.") + "\n"
 	}
-	srv := snap.Servers[v.cursor]
+
+	srv, ok := snap.Server(f.Server)
+	if !ok {
+		srv = snap.Servers[0]
+	}
 
 	var b strings.Builder
 	b.WriteString(t.Title.Render(srv.Name))
 	b.WriteString("  ")
 	b.WriteString(t.StateStyle(srv.State).Render(t.StateGlyph(srv.State) + " " + t.StateWord(srv.State)))
-	if len(snap.Servers) > 1 {
+	if n := len(snap.Servers); n > 1 {
 		b.WriteString("  ")
-		b.WriteString(t.Dim.Render(fmt.Sprintf("%d/%d · ←→ to move", v.cursor+1, len(snap.Servers))))
+		b.WriteString(t.Dim.Render(fmt.Sprintf("%d/%d · ←→ to move", indexOf(snap, srv.Name)+1, n)))
 	}
 	b.WriteString("\n\n")
 
@@ -123,7 +134,7 @@ func logTail(f tui.Frame, srv core.Server) string {
 		if line.count > 1 {
 			text += fmt.Sprintf("  %d×", line.count)
 		}
-		b.WriteString(t.Dim.Render(tui.Truncate(text, f.Width)))
+		b.WriteString(t.Dim.Render(comp.Truncate(text, f.Width)))
 		b.WriteString("\n")
 	}
 	return b.String()
@@ -157,9 +168,22 @@ func collapse(events []model.Event) []collapsedLine {
 
 func itoa(n int) string { return fmt.Sprintf("%d", n) }
 
-// tileWidth is fixed rather than proportional so the four tiles line up with
-// each other and with the fleet table above them at any terminal width.
-const tileWidth = 26
+func indexOf(snap core.Snapshot, name string) int {
+	for i, srv := range snap.Servers {
+		if srv.Name == name {
+			return i
+		}
+	}
+	return 0
+}
+
+// tileWidth is fixed rather than proportional so the tiles line up with each
+// other and with the fleet table at any terminal width.
+//
+// Sized so four fit beside the rail at 120 columns, which is the layout the
+// design is drawn at: 4×21 plus three two-column gaps is 90, inside the 92 the
+// stage gets once the rail has taken its 26.
+const tileWidth = 21
 
 // tiles draws the strip. Under 30 rows the design collapses it to one line of
 // inline values; that is the narrow layout, not a clipped wide one.
@@ -310,10 +334,10 @@ func tile(f tui.Frame, s tileSpec) []string {
 	spark := comp.Sparkline{Width: inner, ASCII: t.ASCII, Min: s.min, Max: s.max}.Render(s.points)
 
 	return []string{
-		t.Header.Render(tui.Pad(s.label, tileWidth)),
-		t.Title.Render(tui.Pad(s.value, tileWidth)),
-		t.Accent.Render(tui.Pad(spark, tileWidth)),
-		t.Dim.Render(tui.Pad(s.note, tileWidth)),
+		t.Header.Render(comp.Pad(s.label, tileWidth)),
+		t.Title.Render(comp.Pad(s.value, tileWidth)),
+		t.Accent.Render(comp.Pad(spark, tileWidth)),
+		t.Dim.Render(comp.Pad(s.note, tileWidth)),
 	}
 }
 
@@ -323,7 +347,7 @@ func inline(f tui.Frame, specs []tileSpec) string {
 	for _, s := range specs {
 		parts = append(parts, f.Theme.Header.Render(s.label)+" "+f.Theme.Title.Render(s.value))
 	}
-	return tui.Truncate(strings.Join(parts, "  ·  "), f.Width) + "\n"
+	return comp.Truncate(strings.Join(parts, "  ·  "), f.Width) + "\n"
 }
 
 // bytesLabel renders a byte count the way an operator reads one.

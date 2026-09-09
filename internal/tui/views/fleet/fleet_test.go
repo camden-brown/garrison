@@ -18,6 +18,7 @@ import (
 	"github.com/camden-brown/garrison/internal/host"
 	"github.com/camden-brown/garrison/internal/model"
 	"github.com/camden-brown/garrison/internal/tui"
+	"github.com/camden-brown/garrison/internal/tui/comp"
 	"github.com/camden-brown/garrison/internal/tui/views/fleet"
 )
 
@@ -79,7 +80,7 @@ func render(t *testing.T, v tui.View, snap core.Snapshot, width, height int) str
 	return v.Render(tui.Frame{
 		Width:  width,
 		Height: height,
-		Theme:  tui.NewTheme(false),
+		Theme:  comp.NewTheme(false),
 		Now:    now,
 	}, snap)
 }
@@ -153,7 +154,7 @@ func TestGoldenRenders(t *testing.T) {
 			name: "confirming-stop", width: 120, height: 34,
 			snap: snapshot(),
 			setup: func(v tui.View, snap core.Snapshot) tui.View {
-				next, _ := v.Update(keyPress("S"), snap)
+				next, _ := v.Update(keyPress("S"), frameFor(snap), snap)
 				return next
 			},
 		},
@@ -216,7 +217,7 @@ func TestStartAndStopEmitActions(t *testing.T) {
 
 	t.Run("start is immediate", func(t *testing.T) {
 		v := fleet.New()
-		_, cmd := v.Update(keyPress("u"), snap)
+		_, cmd := v.Update(keyPress("u"), frameFor(snap), snap)
 		if cmd == nil {
 			t.Fatal("u produced no command")
 		}
@@ -233,12 +234,12 @@ func TestStartAndStopEmitActions(t *testing.T) {
 	// Uppercase confirms. Pressing it must not act on its own.
 	t.Run("stop confirms first", func(t *testing.T) {
 		v := fleet.New()
-		next, cmd := v.Update(keyPress("S"), snap)
+		next, cmd := v.Update(keyPress("S"), frameFor(snap), snap)
 		if cmd != nil {
 			t.Error("S acted without confirmation")
 		}
 
-		after, cmd := next.Update(keyPress("y"), snap)
+		after, cmd := next.Update(keyPress("y"), frameFor(snap), snap)
 		if cmd == nil {
 			t.Fatal("y produced no command")
 		}
@@ -251,8 +252,8 @@ func TestStartAndStopEmitActions(t *testing.T) {
 
 	t.Run("cancelling drops the confirmation", func(t *testing.T) {
 		v := fleet.New()
-		next, _ := v.Update(keyPress("S"), snap)
-		after, cmd := next.Update(keyPress("n"), snap)
+		next, _ := v.Update(keyPress("S"), frameFor(snap), snap)
+		after, cmd := next.Update(keyPress("n"), frameFor(snap), snap)
 		if cmd != nil {
 			t.Error("n produced a command")
 		}
@@ -267,14 +268,14 @@ func TestCursorStaysInRangeWhenTheFleetShrinks(t *testing.T) {
 
 	var v tui.View = fleet.New()
 	for i := 0; i < 10; i++ {
-		v, _ = v.Update(keyPress("j"), full)
+		v, _ = v.Update(keyPress("j"), frameFor(full), full)
 	}
 
 	// Every server but one disappears between polls.
 	shrunk := core.Reduce(core.Snapshot{Engine: core.Engine{OK: true}},
 		core.FleetObserved{At: now, Containers: containers()[:1]})
 
-	v, cmd := v.Update(keyPress("u"), shrunk)
+	v, cmd := v.Update(keyPress("u"), frameFor(shrunk), shrunk)
 	if cmd == nil {
 		t.Fatal("no command after the fleet shrank — the cursor is out of range")
 	}
@@ -296,3 +297,13 @@ func keyPress(s string) tea.KeyMsg {
 func splitLines(s string) []string { return strings.Split(s, "\n") }
 
 func contains(haystack, needle string) bool { return strings.Contains(haystack, needle) }
+
+// frameFor is what the shell would hand the view: the first server selected,
+// which is what the rail defaults to.
+func frameFor(snap core.Snapshot) tui.Frame {
+	f := tui.Frame{Width: 120, Height: 34, Theme: comp.NewTheme(false), Now: now, Focused: true}
+	if len(snap.Servers) > 0 {
+		f.Server = snap.Servers[0].Name
+	}
+	return f
+}
