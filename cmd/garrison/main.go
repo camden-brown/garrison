@@ -27,7 +27,7 @@ import (
 	"github.com/camden-brown/garrison/internal/host/docker"
 	"github.com/camden-brown/garrison/internal/services/fleet"
 	"github.com/camden-brown/garrison/internal/tui"
-	fleetview "github.com/camden-brown/garrison/internal/tui/views/fleet"
+	viewsall "github.com/camden-brown/garrison/internal/tui/views/all"
 
 	// Registers every game. Adding one is a line in that package.
 	_ "github.com/camden-brown/garrison/internal/games/all"
@@ -116,7 +116,7 @@ func runTUI(endpoint string, interval time.Duration, ascii bool) error {
 	}
 
 	tui.ColorFromEnv()
-	app := tui.NewApp(ctx, store, tui.NewTheme(ascii), fleetview.New())
+	app := tui.NewApp(ctx, store, tui.NewTheme(ascii), viewsall.Views()...)
 
 	_, err = tea.NewProgram(app, tea.WithAltScreen(), tea.WithContext(ctx)).Run()
 

@@ -191,7 +191,29 @@ func (m StatsSampled) apply(s Snapshot) Snapshot {
 		srv.CPU, _, _ = srv.CPU.Add(sampledAt, m.Sample.CPUPct)
 		srv.Mem, _, _ = srv.Mem.Add(sampledAt, float64(m.Sample.MemBytes))
 		srv.MemLimit = m.Sample.MemLimit
+
+		// Docker's network counters are cumulative since the container
+		// booted, so the interesting number is the difference. The first
+		// sample has nothing to subtract from and a restart resets the
+		// counters, so both report zero rather than a spike the size of
+		// everything the server has ever sent.
+		total := m.Sample.NetRxBytes + m.Sample.NetTxBytes
+		if srv.netTotal > 0 && total >= srv.netTotal {
+			elapsed := sampledAt.Sub(lastAt(srv.Net)).Seconds()
+			if elapsed > 0 {
+				srv.Net, _, _ = srv.Net.Add(sampledAt, float64(total-srv.netTotal)/elapsed)
+			}
+		}
+		srv.netTotal = total
 	}))
+}
+
+// lastAt is when a history was last written, or the zero time if never.
+func lastAt(h model.History) time.Time {
+	if p, ok := h.Last(); ok {
+		return p.At
+	}
+	return time.Time{}
 }
 
 // OperationBegan marks a server busy. The fleet view redraws on the keystroke

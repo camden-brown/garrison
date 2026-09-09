@@ -97,13 +97,35 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.dispatch(msg)
 
 	case tea.KeyMsg:
-		if k := msg.String(); k == "ctrl+c" || k == "q" {
+		switch k := msg.String(); k {
+		case "ctrl+c", "q":
 			return a, tea.Quit
+		case "f":
+			a.show(ViewFleet)
+			return a, nil
+		case "1":
+			a.show(ViewDashboard)
+			return a, nil
+		case "tab":
+			a.active = (a.active + 1) % len(a.views)
+			return a, nil
 		}
 		return a.routeToView(msg)
 	}
 
 	return a.routeToView(msg)
+}
+
+// show switches to a view by id. Unknown ids are ignored rather than
+// panicking: the keymap and the registry are edited separately and drifting
+// apart should not take the program down.
+func (a *App) show(id ViewID) {
+	for i, v := range a.views {
+		if v.ID() == id {
+			a.active = i
+			return
+		}
+	}
 }
 
 func (a *App) routeToView(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -153,7 +175,12 @@ func (a *App) statusBar() string {
 	t := a.theme
 	up, down, unknown := a.snap.Counts()
 
-	left := t.Bar.Render(" FLEET ") + "  " +
+	label := " FLEET "
+	if len(a.views) > 0 {
+		label = " " + strings.ToUpper(a.views[a.active].Title()) + " "
+	}
+
+	left := t.Bar.Render(label) + "  " +
 		strconv.Itoa(len(a.snap.Servers)) + " servers · " +
 		t.StateStyle(model.StateRunning).Render(strconv.Itoa(up)+" up")
 

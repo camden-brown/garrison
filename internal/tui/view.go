@@ -15,7 +15,10 @@ import (
 // else.
 type ViewID string
 
-const ViewFleet ViewID = "fleet"
+const (
+	ViewFleet     ViewID = "fleet"
+	ViewDashboard ViewID = "dashboard"
+)
 
 // View is the contract every screen implements.
 //

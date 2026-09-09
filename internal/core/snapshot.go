@@ -76,6 +76,27 @@ type Server struct {
 	// and something the wizard never proposes.
 	MemLimit int64
 
+	// Net is combined network throughput in bytes per second, computed from
+	// the deltas between samples. Docker reports cumulative counters, which
+	// as a sparkline is a straight line going up and tells you nothing.
+	Net model.History
+
+	// netTotal is the previous cumulative reading, kept so the next sample
+	// can be turned into a rate. Unexported: it is arithmetic scaffolding
+	// rather than something a view should render.
+	netTotal int64
+
+	// GameMetric is the fourth dashboard tile, and MetricLabel names it.
+	//
+	// Both come from the game plugin rather than from anything here: its
+	// Parse emits an Event carrying a metric name and a value, and the tile
+	// renders whatever that is. It is how Zomboid shows zombies alive and
+	// Valheim world-save duration without a line of per-game code in the
+	// TUI. An empty MetricLabel means the game supplies none and the tile
+	// shows network I/O instead.
+	GameMetric  model.History
+	MetricLabel string
+
 	// StopGrace is how long the stop in flight will wait before killing, and
 	// afterwards how long the one that killed it waited. It is what lets both
 	// "stopping… up to 60s" and "killed after 60s grace" name a real number

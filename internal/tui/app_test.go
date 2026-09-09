@@ -83,12 +83,13 @@ func newApp(t *testing.T, store tui.Store, v tui.View) *tui.App {
 }
 
 // The status bar never changes position, so what it says has to be right
-// without being read closely.
+// without being read closely. It names the screen you are on, so the one
+// fixed thing on the display also answers "where am I".
 func TestStatusBarSummarisesTheFleet(t *testing.T) {
 	app := newApp(t, newStub(snapshot()), &stubView{})
 
 	out := app.View()
-	for _, want := range []string{"FLEET", "3 servers", "1 up", "2 down", "npipe", "healthy"} {
+	for _, want := range []string{"STUB", "3 servers", "1 up", "2 down", "npipe", "healthy"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status bar is missing %q:\n%s", want, out)
 		}
@@ -140,6 +141,51 @@ func TestTheShellDispatchesViewActions(t *testing.T) {
 	if len(store.started) != 0 {
 		t.Errorf("started = %v, want nothing", store.started)
 	}
+}
+
+// Adding a screen must not mean editing the shell. The registry decides what
+// exists; the shell only knows how to switch between them.
+func TestViewSwitching(t *testing.T) {
+	first := &namedView{id: tui.ViewFleet, title: "Fleet"}
+	second := &namedView{id: tui.ViewDashboard, title: "Dashboard"}
+	app := tui.NewApp(context.Background(), newStub(snapshot()), tui.NewTheme(false), first, second)
+	app.Update(tea.WindowSizeMsg{Width: 120, Height: 34})
+
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1")})
+	if got := app.View(); !strings.Contains(got, "DASHBOARD") {
+		t.Errorf("pressing 1 did not switch to the dashboard:\n%s", got)
+	}
+
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
+	if got := app.View(); !strings.Contains(got, "FLEET") {
+		t.Errorf("pressing f did not return to the fleet:\n%s", got)
+	}
+}
+
+// A key naming a view that is not registered must be ignored, not fatal: the
+// keymap and the registry are edited separately and will drift.
+func TestSwitchingToAnUnregisteredViewIsIgnored(t *testing.T) {
+	only := &namedView{id: tui.ViewFleet, title: "Fleet"}
+	app := tui.NewApp(context.Background(), newStub(snapshot()), tui.NewTheme(false), only)
+	app.Update(tea.WindowSizeMsg{Width: 120, Height: 34})
+
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1")})
+	if got := app.View(); !strings.Contains(got, "FLEET") {
+		t.Errorf("the shell moved somewhere that does not exist:\n%s", got)
+	}
+}
+
+// namedView is a stub that reports an id and title, for switching tests.
+type namedView struct {
+	stubView
+	id    tui.ViewID
+	title string
+}
+
+func (v *namedView) ID() tui.ViewID { return v.id }
+func (v *namedView) Title() string  { return v.title }
+func (v *namedView) Update(msg tea.Msg, s core.Snapshot) (tui.View, tea.Cmd) {
+	return v, nil
 }
 
 func TestQuitKeys(t *testing.T) {
