@@ -1,0 +1,22 @@
+# build output
+/garrison
+/garrison.exe
+/dist/
+
+# go
+*.test
+*.out
+/vendor/
+
+# local config and data — never commit a real server config
+/garrison.toml
+/*.db
+/servers/
+/testdata/local/
+
+# editors / os
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

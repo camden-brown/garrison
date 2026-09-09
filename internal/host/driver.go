@@ -1,0 +1,112 @@
+// Package host is the boundary between Garrison and whatever actually runs a
+// container. Docker is one implementation; nothing above this package knows
+// which one is in use, which is the seam that would let a remote or SSH driver
+// drop in later.
+//
+// Named host rather than runtime so it does not shadow the standard library.
+//
+// This package must not import internal/games, internal/core or internal/tui:
+// it consumes a model.Plan and knows nothing about who produced it.
+package host
+
+import (
+	"context"
+	"io"
+	"time"
+
+	"github.com/camden-brown/garrison/internal/model"
+)
+
+// Driver is the only interface Garrison uses to run containers. Everything
+// above it is testable against a fake implementation with Docker stopped.
+type Driver interface {
+	// List returns every container Garrison manages, found by label rather
+	// than by local bookkeeping — the fleet is rediscoverable after losing
+	// %APPDATA%.
+	List(ctx context.Context) ([]Container, error)
+	Inspect(ctx context.Context, id string) (Container, error)
+
+	Create(ctx context.Context, inst model.Instance, plan model.Plan) (id string, err error)
+	Start(ctx context.Context, id string) error
+	Stop(ctx context.Context, id string, signal string, grace time.Duration) error
+	Remove(ctx context.Context, id string, withVolumes bool) error
+
+	// Stats streams roughly one sample per second until ctx is cancelled.
+	// The channel is closed when the stream ends.
+	Stats(ctx context.Context, id string) (<-chan Sample, error)
+
+	// Logs follows a container's combined output, demultiplexed, starting
+	// from the last tail lines.
+	Logs(ctx context.Context, id string, tail int) (io.ReadCloser, error)
+
+	// Exec runs a command inside a container and returns its output.
+	Exec(ctx context.Context, id string, argv []string) ([]byte, error)
+
+	// Ping reports whether the engine is reachable. A failure is surfaced as
+	// StateUnknown across the fleet rather than rendered as "stopped".
+	Ping(ctx context.Context) error
+}
+
+// Labels Garrison stamps on every container it creates. PlanHash lets startup
+// reconciliation notice that a container no longer matches what its config
+// would produce, and report the drift instead of silently correcting it.
+const (
+	LabelManaged  = "garrison.managed"
+	LabelInstance = "garrison.instance"
+	LabelGame     = "garrison.game"
+	LabelPlanHash = "garrison.plan"
+)
+
+// Container is the observed state of one managed container.
+type Container struct {
+	ID       string
+	Name     string
+	Instance string // from LabelInstance
+	Game     string // from LabelGame
+	PlanHash string // from LabelPlanHash
+	State    State
+	ExitCode int
+	Started  time.Time
+	Restarts int // consecutive restarts, for crash-loop detection
+	Health   model.Health
+	Ports    []model.PortMap
+}
+
+// State is a container's lifecycle state, collapsed to what the UI encodes.
+type State uint8
+
+const (
+	// StateUnknown means the engine could not be reached. It is deliberately
+	// distinct from StateStopped.
+	StateUnknown State = iota
+	StateCreated
+	StateRunning
+	StateRestarting
+	StateStopped
+	StateCrashed
+)
+
+var stateNames = [...]string{
+	"unknown", "created", "running", "restarting", "stopped", "crashed",
+}
+
+func (s State) String() string {
+	if int(s) < len(stateNames) {
+		return stateNames[s]
+	}
+	return "unknown"
+}
+
+// Sample is one point of container resource usage.
+//
+// CPUPct is already computed from deltas. MemBytes excludes page cache: under
+// the WSL2 backend the raw usage figure includes it, and reporting that makes
+// every server look like it is about to be killed.
+type Sample struct {
+	At         time.Time
+	CPUPct     float64
+	MemBytes   int64
+	MemLimit   int64
+	NetRxBytes int64
+	NetTxBytes int64
+}

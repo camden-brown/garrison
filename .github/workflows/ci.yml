@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+          cache: true
+
+      - name: vet
+        run: go vet ./...
+
+      # Includes the dependency-rule test in internal/arch, which fails the
+      # build if a package imports across a layer boundary.
+      - name: test
+        run: go test ./...
+
+      # Windows is the target platform; catch a break there from Linux CI.
+      - name: cross-compile for windows
+        run: GOOS=windows GOARCH=amd64 go build -o /tmp/garrison.exe ./cmd/garrison
