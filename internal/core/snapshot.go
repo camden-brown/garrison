@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/camden-brown/garrison/internal/model"
+	"github.com/camden-brown/garrison/internal/tasks"
 )
 
 // Snapshot is the whole of what Garrison knows, at one instant.
@@ -30,6 +31,10 @@ type Snapshot struct {
 	Engine  Engine
 	Servers []Server
 	Notices []Notice
+
+	// Tasks is everything the engine is doing or has recently done, newest
+	// last. Bounded like everything else here.
+	Tasks []tasks.Progress
 
 	// instances is what the config files say, keyed by name. It is kept
 	// separately from Servers because the two are different sets: a server
@@ -259,9 +264,13 @@ func (s Server) Uptime(now time.Time) time.Duration {
 type Op string
 
 const (
-	OpNone  Op = ""
-	OpStart Op = "start"
-	OpStop  Op = "stop"
+	OpNone    Op = ""
+	OpStart   Op = "start"
+	OpStop    Op = "stop"
+	OpRestart Op = "restart"
+	OpApply   Op = "apply"
+	OpUpdate  Op = "update"
+	OpBackup  Op = "backup"
 )
 
 // Present is the progressive form, which is what a busy row says.
@@ -271,6 +280,14 @@ func (o Op) Present() string {
 		return "starting"
 	case OpStop:
 		return "stopping"
+	case OpRestart:
+		return "restarting"
+	case OpApply:
+		return "applying settings"
+	case OpUpdate:
+		return "updating"
+	case OpBackup:
+		return "backing up"
 	}
 	return ""
 }
@@ -293,6 +310,11 @@ type Notice struct {
 	Text   string
 }
 
+// maxTasks bounds the task list. Long-term history belongs in SQLite, which
+// answers "what happened last Tuesday"; this answers "what is happening now
+// and what just finished", and those want very different sizes.
+const maxTasks = 50
+
 // maxNotices bounds the notice list. Every buffer in Garrison is bounded on
 // purpose: this process is meant to stay open for weeks.
 const maxNotices = 100
@@ -305,6 +327,38 @@ func (s Snapshot) Server(name string) (Server, bool) {
 		}
 	}
 	return Server{}, false
+}
+
+// Task returns one task by id.
+func (s Snapshot) Task(id string) (tasks.Progress, bool) {
+	for _, t := range s.Tasks {
+		if t.ID == id {
+			return t, true
+		}
+	}
+	return tasks.Progress{}, false
+}
+
+// RunningTasks is what is in flight right now.
+func (s Snapshot) RunningTasks() []tasks.Progress {
+	var out []tasks.Progress
+	for _, t := range s.Tasks {
+		if !t.State.Done() {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// TaskFor is the task in flight against a server, if there is one. The fleet
+// row uses it to say what is happening rather than only that something is.
+func (s Snapshot) TaskFor(server string) (tasks.Progress, bool) {
+	for _, t := range s.Tasks {
+		if t.Server == server && !t.State.Done() {
+			return t, true
+		}
+	}
+	return tasks.Progress{}, false
 }
 
 // Counts is the fleet summary the status bar shows.

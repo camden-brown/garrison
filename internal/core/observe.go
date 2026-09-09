@@ -6,6 +6,7 @@ import (
 
 	"github.com/camden-brown/garrison/internal/host"
 	"github.com/camden-brown/garrison/internal/model"
+	"github.com/camden-brown/garrison/internal/tasks"
 )
 
 // The methods below make a *Store an observer for the pollers in
@@ -29,6 +30,11 @@ func (s *Store) FleetUnobservable(ctx context.Context, at time.Time, err error) 
 // LogEventsRead records a batch of parsed log lines.
 func (s *Store) LogEventsRead(ctx context.Context, instance string, events []model.Event) {
 	s.Send(ctx, LogEventsRead{At: s.now(), Server: instance, Events: events})
+}
+
+// TaskProgressed records where a task got to.
+func (s *Store) TaskProgressed(ctx context.Context, p tasks.Progress) {
+	s.Send(ctx, TaskProgressed{At: s.now(), Progress: p})
 }
 
 // InstancesLoaded records what the config directory says.

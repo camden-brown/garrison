@@ -123,6 +123,15 @@ func Discard(server string) tea.Cmd {
 	return func() tea.Msg { return DiscardMsg{Server: server} }
 }
 
+// CancelTaskMsg asks the engine to stop a task. It compensates rather than
+// simply stopping, so the world is left where it started.
+type CancelTaskMsg struct{ ID string }
+
+// CancelTask returns a tea.Cmd that emits a CancelTaskMsg.
+func CancelTask(id string) tea.Cmd {
+	return func() tea.Msg { return CancelTaskMsg{ID: id} }
+}
+
 // SelectMsg is a view asking the shell to select a different server. The
 // Fleet table and the rail's server list are the same selection seen twice, so
 // moving in either has to move both.

@@ -16,6 +16,7 @@ import (
 	"github.com/camden-brown/garrison/internal/tui/views/fleet"
 	"github.com/camden-brown/garrison/internal/tui/views/settings"
 	"github.com/camden-brown/garrison/internal/tui/views/stub"
+	"github.com/camden-brown/garrison/internal/tui/views/tasks"
 )
 
 // Views returns a fresh set. They are values with their own state, so each
@@ -36,9 +37,7 @@ func Views() []tui.View {
 			"Load order you can reorder, version and update checks, and conflict detection. "+
 				"A game with no mod system gets an explanation here rather than an empty table."),
 		settings.New(),
-		stub.New(tui.ViewTasks, "Tasks", "M2",
-			"The running task expanded to its steps, with its schedule and history. Restarts, "+
-				"updates, mod syncs and backups become durable step sequences with declared rollback."),
+		tasks.New(),
 		stub.New(tui.ViewBackups, "Backups", "M2",
 			"Snapshots, sizes and restore. Restoring over a live save is one of the three actions "+
 				"that asks you to type the server's name."),

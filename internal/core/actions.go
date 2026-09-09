@@ -3,47 +3,80 @@ package core
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/camden-brown/garrison/internal/model"
+	"github.com/camden-brown/garrison/internal/tasks"
 )
 
-// Control is the side of the world that can change a container.
+// Tasks is the engine, as the store needs it.
 //
-// It is an interface rather than a host.Driver so the store never does I/O
-// itself: the implementation lives in internal/services/fleet, below the
-// store, and the store is left as what it should be — a reducer with a
-// mailbox. It also means every store test runs with no runtime at all.
-type Control interface {
-	Start(ctx context.Context, instance, id string) error
-	Stop(ctx context.Context, instance, id string) error
-
-	// StopGrace is how long Stop will wait for the server to leave before
-	// killing it. The store asks rather than being configured with it, so
-	// there is one source of truth; the instance is a parameter because from
-	// M1 the answer comes from the game's plan, and Zomboid wants twice what
-	// Valheim does.
-	StopGrace(instance string) time.Duration
+// An interface rather than the engine itself so the store can be tested with
+// no engine at all, and so nothing here has to know how a task is run — only
+// how to ask for one.
+type Tasks interface {
+	ID(kind tasks.Kind) string
+	Submit(ctx context.Context, t *tasks.Task)
+	Cancel(ctx context.Context, id string)
 }
 
-// Start brings a server up. It returns as soon as the operation is recorded;
-// the work happens in the background and reports back as mutations.
-//
-// At M2 this becomes a task with steps, a durable record and a declared
-// compensation, which is where anything slower than a frame belongs. It is a
-// bare goroutine here because M0 has no task engine yet and a fleet list you
-// cannot start a server from is not worth looking at. The shape is the same
-// one a task will emit: began, then ended with or without an error.
+// Saver writes a server's configuration, for the apply task to hand on.
+type Saver interface {
+	Save(inst model.Instance) error
+}
+
+// Start brings a server up, creating its container if it has none.
 func (s *Store) Start(ctx context.Context, instance string) {
-	s.operate(ctx, instance, OpStart, func(ctl Control, id string) error {
-		return ctl.Start(ctx, instance, id)
+	s.submit(ctx, instance, tasks.KindStart, func(id string) *tasks.Task {
+		return tasks.Start(id, instance, tasks.TriggerManual)
 	})
 }
 
-// Stop takes a server down with the game's own signal and grace period.
+// Stop takes a server down with the signal and grace its game asks for.
 func (s *Store) Stop(ctx context.Context, instance string) {
-	s.operate(ctx, instance, OpStop, func(ctl Control, id string) error {
-		return ctl.Stop(ctx, instance, id)
+	s.submit(ctx, instance, tasks.KindStop, func(id string) *tasks.Task {
+		return tasks.Stop(id, instance, tasks.TriggerManual)
+	})
+}
+
+// Restart is stop and start as one unit, so a failure halfway puts the server
+// back rather than leaving it down.
+func (s *Store) Restart(ctx context.Context, instance string) {
+	s.submit(ctx, instance, tasks.KindRestart, func(id string) *tasks.Task {
+		return tasks.Restart(id, instance, tasks.TriggerManual)
+	})
+}
+
+// ApplySettings writes a server's pending changes and does whatever they cost.
+//
+// recreate says whether the change needs a new container, which the caller
+// works out from the game's Schema — the store does not know what a setting
+// means, only that somebody decided this one is expensive.
+func (s *Store) ApplySettings(ctx context.Context, instance string, recreate bool) {
+	srv, ok := s.Snapshot().Server(instance)
+	if !ok {
+		s.raise(ctx, instance, fmt.Errorf("%s: apply: no such server", instance))
+		return
+	}
+	if srv.Pending() == 0 {
+		return
+	}
+	if s.saver == nil {
+		s.raise(ctx, instance, fmt.Errorf("%s: apply: nowhere to write the configuration", instance))
+		return
+	}
+
+	next := srv.Instance
+	settings := make(map[string]any, len(next.Settings)+len(srv.Draft))
+	for k, v := range next.Settings {
+		settings[k] = v
+	}
+	for k, v := range srv.Draft {
+		settings[k] = v
+	}
+	next.Settings = settings
+
+	s.submit(ctx, instance, tasks.KindApplyConfig, func(id string) *tasks.Task {
+		return tasks.ApplyConfig(id, instance, tasks.TriggerManual, next, s.saver, recreate)
 	})
 }
 
@@ -57,51 +90,51 @@ func (s *Store) DiscardDraft(ctx context.Context, instance string) {
 	s.Send(ctx, DraftDiscarded{At: s.now(), Server: instance})
 }
 
-func (s *Store) operate(ctx context.Context, instance string, op Op, run func(Control, string) error) {
-	srv, ok := s.Snapshot().Server(instance)
-	if !ok {
-		s.raise(ctx, instance, fmt.Errorf("%s: %s: no such server", instance, op))
-		return
+// CancelTask asks the engine to stop one. It compensates rather than simply
+// stopping, so the world is left where it started.
+func (s *Store) CancelTask(ctx context.Context, id string) {
+	if engine := s.engine(); engine != nil {
+		engine.Cancel(ctx, id)
 	}
-	if srv.Busy != OpNone {
-		s.raise(ctx, instance, fmt.Errorf("%s: %s: already %s", instance, op, srv.Busy.Present()))
-		return
-	}
-	if reason, ok := refuse(srv, op); !ok {
-		s.raise(ctx, instance, fmt.Errorf("%s: %s: %s", instance, op, reason))
-		return
-	}
-	if s.ctl == nil {
-		s.raise(ctx, instance, fmt.Errorf("%s: %s: no container runtime attached", instance, op))
-		return
-	}
-
-	// The grace travels with the operation so the view can say how long
-	// "stopping…" is expected to last. A progress message with no budget is
-	// the reason people press the key a second time.
-	var grace time.Duration
-	if op == OpStop {
-		grace = s.ctl.StopGrace(instance)
-	}
-	s.Send(ctx, OperationBegan{At: s.now(), Server: instance, Op: op, Grace: grace})
-	ctl, id := s.ctl, srv.ID
-	go func() {
-		err := run(ctl, id)
-		s.Send(ctx, OperationEnded{At: s.now(), Server: instance, Op: op, Err: err})
-	}()
 }
 
-// refuse rejects the operations that cannot succeed, so the answer is a
-// sentence on the status bar rather than a Docker error two seconds later.
+// submit refuses what cannot succeed before queueing anything, so the answer
+// is a sentence on the status bar rather than a task that fails two seconds
+// later for a reason the operator could have been told immediately.
+func (s *Store) submit(ctx context.Context, instance string, kind tasks.Kind, build func(id string) *tasks.Task) {
+	snap := s.Snapshot()
+
+	srv, ok := snap.Server(instance)
+	if !ok {
+		s.raise(ctx, instance, fmt.Errorf("%s: %s: no such server", instance, kind))
+		return
+	}
+	if reason, ok := refuse(srv, kind); !ok {
+		s.raise(ctx, instance, fmt.Errorf("%s: %s: %s", instance, kind, reason))
+		return
+	}
+	engine := s.engine()
+	if engine == nil {
+		s.raise(ctx, instance, fmt.Errorf("%s: %s: no task engine attached", instance, kind))
+		return
+	}
+
+	engine.Submit(ctx, build(engine.ID(kind)))
+}
+
+// refuse rejects the operations that cannot succeed.
 //
-// Unknown is not refused: if the engine is unreachable the state is stale, and
-// the honest response to "start it anyway" is to try and report what happens.
-func refuse(srv Server, op Op) (string, bool) {
+// Unknown state is not refused: if the engine is unreachable the state is
+// stale, and the honest response to "start it anyway" is to try and report
+// what happens.
+func refuse(srv Server, kind tasks.Kind) (string, bool) {
 	switch {
-	case op == OpStart && srv.State == model.StateRunning:
+	case kind == tasks.KindStart && srv.State == model.StateRunning:
 		return "already running", false
-	case op == OpStop && srv.State == model.StateStopped:
+	case kind == tasks.KindStop && srv.State == model.StateStopped && srv.Created:
 		return "already stopped", false
+	case kind == tasks.KindStop && !srv.Created:
+		return "it has never been created", false
 	}
 	return "", true
 }

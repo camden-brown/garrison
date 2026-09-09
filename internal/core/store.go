@@ -20,7 +20,8 @@ type Store struct {
 	closed bool
 
 	muts         chan Mutation
-	ctl          Control
+	tasks        Tasks
+	saver        Saver
 	now          func() time.Time
 	metricLabels map[string]string
 }
@@ -28,10 +29,13 @@ type Store struct {
 // Options configure a store. Every field has a working default so a test can
 // say core.New(core.Options{}).
 type Options struct {
-	// Control performs the side effects the store's actions ask for. Nil
-	// means actions report that no runtime is attached, which is what a
-	// snapshot-only test wants.
-	Control Control
+	// Tasks runs the work the store's actions ask for. Nil means actions
+	// report that no engine is attached, which is what a snapshot-only test
+	// wants.
+	Tasks Tasks
+
+	// Saver writes server configuration, for the apply task.
+	Saver Saver
 
 	// Now is the clock, injectable so reducer tests are not timing tests.
 	Now func() time.Time
@@ -58,11 +62,24 @@ func New(opts Options) *Store {
 	}
 	return &Store{
 		muts:         make(chan Mutation, opts.Buffer),
-		ctl:          opts.Control,
+		tasks:        opts.Tasks,
+		saver:        opts.Saver,
 		now:          opts.Now,
 		metricLabels: opts.MetricLabels,
 		snap:         Snapshot{At: opts.Now()},
 	}
+}
+
+// AttachTasks gives the store its engine.
+//
+// It is set after construction because the engine needs the store as its
+// observer and the store needs the engine to submit to — a knot that has to be
+// tied somewhere, and tying it here keeps both constructors honest about what
+// they require.
+func (s *Store) AttachTasks(t Tasks) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tasks = t
 }
 
 // Run is the single writer. It applies mutations in the order received and
@@ -127,6 +144,14 @@ func (s *Store) Send(ctx context.Context, m Mutation) {
 	case s.muts <- m:
 	case <-ctx.Done():
 	}
+}
+
+// engine reads the attached task engine under the lock, because AttachTasks
+// runs during startup while a view may already be dispatching.
+func (s *Store) engine() Tasks {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.tasks
 }
 
 // Snapshot returns the current state. Safe to call from any goroutine.

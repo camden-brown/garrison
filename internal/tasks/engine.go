@@ -246,6 +246,12 @@ func (e *Engine) execute(ctx context.Context, t *Task) Progress {
 
 	for i, step := range t.Steps {
 		p.Cursor = i
+		sc.Revise = func(d time.Duration) {
+			if i < len(p.Est) {
+				p.Est[i] = d
+			}
+			e.report(ctx, p)
+		}
 
 		// Written before the step, not after: the question this record has
 		// to answer is "what was running when the power went out", and an

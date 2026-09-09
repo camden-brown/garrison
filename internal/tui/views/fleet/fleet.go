@@ -19,6 +19,7 @@ import (
 
 	"github.com/camden-brown/garrison/internal/core"
 	"github.com/camden-brown/garrison/internal/model"
+	engine "github.com/camden-brown/garrison/internal/tasks"
 	"github.com/camden-brown/garrison/internal/tui"
 	"github.com/camden-brown/garrison/internal/tui/comp"
 )
@@ -31,6 +32,11 @@ import (
 // at is a bug waiting for a busy evening.
 type View struct {
 	confirm string // instance awaiting a stop confirmation, empty when none
+
+	// snap is the snapshot being drawn, held only for the length of a
+	// render so row helpers can reach the task list without every one of
+	// them taking it as an argument.
+	snap core.Snapshot
 }
 
 // New returns the Fleet view.
@@ -136,6 +142,7 @@ func neighbour(snap core.Snapshot, from string, delta int) string {
 func (v *View) Render(f tui.Frame, snap core.Snapshot) string {
 	t := f.Theme
 	target := selectedOr(f.Server, snap)
+	v.snap = snap
 
 	var b strings.Builder
 
@@ -601,7 +608,7 @@ func (v *View) row(f tui.Frame, c columns, srv core.Server, selected bool) strin
 		t.Dim.Render(comp.PadLeft(cpuCell(srv), c.cpu)),
 		t.Dim.Render(comp.PadLeft(memCell(srv), c.mem)),
 		t.Dim.Render(comp.PadLeft(comp.Duration(srv.Uptime(f.Now)), c.uptime)),
-		lastCell(t, srv, c.last),
+		v.lastCell(f, t, srv, c.last),
 	)
 	return strings.TrimRight(strings.Join(cells, " "), " ")
 }
@@ -642,7 +649,12 @@ func memCell(srv core.Server) string {
 // One column rather than three because they are never all interesting at once
 // — a server being restarted is not also telling you its ports — and the width
 // it saves is what lets the game column survive beside the rail.
-func lastCell(t *comp.Theme, srv core.Server, width int) string {
+func (v *View) lastCell(f tui.Frame, t *comp.Theme, srv core.Server, width int) string {
+	// A task in flight beats everything else: the operator pressed the key
+	// that started it and wants to see where it got to.
+	if task, ok := v.snap.TaskFor(srv.Name); ok {
+		return taskCell(t, task, width)
+	}
 	if srv.Busy != core.OpNone {
 		return t.Accent.Render(comp.Pad(busyText(srv), width))
 	}
@@ -691,6 +703,13 @@ func busyText(srv core.Server) string {
 		return "stopping… up to " + core.Budget(srv.StopGrace)
 	}
 	return srv.Busy.Present() + "…"
+}
+
+// taskCell shows how far a running task has got, which is what the mockup's
+// PORTS / TASK column carries for a server something is happening to.
+func taskCell(t *comp.Theme, task engine.Progress, width int) string {
+	label := fmt.Sprintf("%s %d/%d %s", task.Kind, task.Cursor+1, len(task.Steps), task.StepName())
+	return t.Accent.Render(comp.Pad(comp.Truncate(label, width), width))
 }
 
 func portList(ports []model.PortMap) string {

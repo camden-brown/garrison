@@ -6,6 +6,7 @@ import (
 
 	"github.com/camden-brown/garrison/internal/host"
 	"github.com/camden-brown/garrison/internal/model"
+	"github.com/camden-brown/garrison/internal/tasks"
 )
 
 // Mutation is one fact about the world, applied by the single writer.
@@ -424,60 +425,108 @@ func appendConsole(console []model.Event, ev model.Event) []model.Event {
 	return out
 }
 
-// OperationBegan marks a server busy. The fleet view redraws on the keystroke
-// rather than on the next poll, which is the difference between an interface
-// that feels alive and one you press twice.
-type OperationBegan struct {
-	At     time.Time
-	Server string
-	Op     Op
-	Grace  time.Duration // OpStop only: how long before it kills
+// TaskProgressed is the engine reporting where a task got to.
+//
+// It replaces the entry with the same id rather than appending, because a task
+// reports many times and a list of every step of every task is a log, not a
+// view of what is happening.
+type TaskProgressed struct {
+	At       time.Time
+	Progress tasks.Progress
 }
 
-func (m OperationBegan) apply(s Snapshot) Snapshot {
+func (m TaskProgressed) apply(s Snapshot) Snapshot {
 	s.At = m.At
-	return s.withServers(mapServer(s.Servers, m.Server, func(srv *Server) {
-		srv.Busy = m.Op
-		if m.Op == OpStop {
-			srv.StopGrace = m.Grace
+
+	next := make([]tasks.Progress, 0, len(s.Tasks)+1)
+	replaced := false
+	for _, t := range s.Tasks {
+		if t.ID == m.Progress.ID {
+			next = append(next, m.Progress)
+			replaced = true
+			continue
 		}
-		if m.Op == OpStart {
-			// Starting it again retires the last stop we asked for, so a
-			// later crash is reported as one.
+		next = append(next, t)
+	}
+	if !replaced {
+		next = append(next, m.Progress)
+	}
+	if len(next) > maxTasks {
+		next = next[len(next)-maxTasks:]
+	}
+	s.Tasks = next
+
+	// A task that failed is worth saying out loud. One that was cancelled
+	// is not: the operator asked for it and already knows.
+	if m.Progress.State == tasks.StateFailed || m.Progress.State == tasks.StateRolledBack {
+		s = s.withNotice(Notice{
+			At: m.At, Level: LevelError, Server: m.Progress.Server, Text: m.Progress.Err,
+		})
+	}
+
+	// What a server is busy with is not separate knowledge from what the
+	// engine is doing to it. Deriving one from the other means they cannot
+	// disagree — which they did when a task failed in a way that skipped
+	// whatever was supposed to clear the flag.
+	return s.withServers(mapServer(s.Servers, m.Progress.Server, func(srv *Server) {
+		srv.Busy = busyFrom(s, m.Progress.Server)
+
+		// The stop grace is sticky: it is shown while stopping and again
+		// afterwards, if the server had to be killed, to say how long it
+		// was given.
+		if grace, ok := stopGraceFrom(m.Progress); ok {
+			srv.StopGrace = grace
+		}
+
+		// A stop Garrison asked for and completed is what lets a later
+		// non-zero exit read as a shutdown rather than a crash.
+		if m.Progress.Kind == tasks.KindStop && m.Progress.State == tasks.StateDone {
+			srv.StopRequested = true
+		}
+		if m.Progress.Kind == tasks.KindStart && m.Progress.State != tasks.StateQueued {
 			srv.StopRequested = false
 		}
 	}))
 }
 
-// OperationEnded clears it, and says so if it failed.
-//
-// The state itself is not written here: what the container actually did is the
-// engine's to report, and the next poll will say. Writing an optimistic
-// "running" and being wrong is how a fleet view starts lying.
-type OperationEnded struct {
-	At     time.Time
-	Server string
-	Op     Op
-	Err    error
+// busyFrom is what a server is currently having done to it, taken from the
+// tasks in flight against it.
+func busyFrom(s Snapshot, server string) Op {
+	for _, t := range s.Tasks {
+		if t.Server != server || t.State.Done() {
+			continue
+		}
+		switch t.Kind {
+		case tasks.KindStop:
+			return OpStop
+		case tasks.KindStart:
+			return OpStart
+		case tasks.KindRestart:
+			return OpRestart
+		case tasks.KindApplyConfig:
+			return OpApply
+		case tasks.KindUpdate:
+			return OpUpdate
+		case tasks.KindBackup:
+			return OpBackup
+		}
+		return OpStart
+	}
+	return OpNone
 }
 
-func (m OperationEnded) apply(s Snapshot) Snapshot {
-	s.At = m.At
-	s = s.withServers(mapServer(s.Servers, m.Server, func(srv *Server) {
-		srv.Busy = OpNone
-		if m.Op == OpStop && m.Err == nil {
-			srv.StopRequested = true
-		}
-	}))
-	if m.Err != nil {
-		s = s.withNotice(Notice{
-			At:     m.At,
-			Level:  LevelError,
-			Server: m.Server,
-			Text:   m.Err.Error(),
-		})
+// stopGraceFrom reads how long a stop task is waiting, which its first step
+// revises once it has read the game's plan.
+func stopGraceFrom(p tasks.Progress) (time.Duration, bool) {
+	if p.Kind != tasks.KindStop && p.Kind != tasks.KindRestart {
+		return 0, false
 	}
-	return s
+	for i, name := range p.Steps {
+		if name == "stop" && i < len(p.Est) && p.Est[i] > 0 {
+			return p.Est[i], true
+		}
+	}
+	return 0, false
 }
 
 // SettingEdited records one change the operator made but has not applied.

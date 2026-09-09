@@ -121,6 +121,12 @@ type StepCtx struct {
 	// Log records what a step did, for the task's own history. It is not
 	// the container's log.
 	Log func(string)
+
+	// Revise updates the running step's estimate. A step often learns how
+	// long it may take only once it starts — a stop waits whatever grace
+	// the game's plan asks for — and a progress bar built on a guess made
+	// before that is a progress bar that lies.
+	Revise func(time.Duration)
 }
 
 // Set records a value for a later step.
@@ -142,6 +148,13 @@ func (s *StepCtx) String(key string) (string, bool) {
 func (s *StepCtx) Say(msg string) {
 	if s.Log != nil {
 		s.Log(msg)
+	}
+}
+
+// Estimate revises how long the running step expects to take.
+func (s *StepCtx) Estimate(d time.Duration) {
+	if s.Revise != nil {
+		s.Revise(d)
 	}
 }
 

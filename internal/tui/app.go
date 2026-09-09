@@ -23,6 +23,7 @@ type Store interface {
 	Stop(ctx context.Context, instance string)
 	EditSetting(ctx context.Context, instance, key string, value any)
 	DiscardDraft(ctx context.Context, instance string)
+	CancelTask(ctx context.Context, id string)
 }
 
 // railThreshold is the width below which the rail is dropped.
@@ -132,6 +133,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case DiscardMsg:
 		a.store.DiscardDraft(a.ctx, msg.Server)
+		return a, nil
+
+	case CancelTaskMsg:
+		a.store.CancelTask(a.ctx, msg.ID)
 		return a, nil
 
 	case tea.KeyMsg:

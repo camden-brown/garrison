@@ -7,6 +7,7 @@ import (
 
 	"github.com/camden-brown/garrison/internal/host"
 	"github.com/camden-brown/garrison/internal/model"
+	"github.com/camden-brown/garrison/internal/tasks"
 )
 
 var at = time.Date(2026, 9, 9, 21, 7, 0, 0, time.UTC)
@@ -56,7 +57,7 @@ func TestFleetObservedMarksTheEngineHealthy(t *testing.T) {
 func TestFleetObservedPreservesBusy(t *testing.T) {
 	s := apply(Snapshot{},
 		observed(host.Container{Instance: "zomboid-main", State: model.StateRunning}),
-		OperationBegan{At: at, Server: "zomboid-main", Op: OpStop},
+		running("zomboid-main", tasks.KindStop),
 		observed(host.Container{Instance: "zomboid-main", State: model.StateRunning}),
 	)
 
@@ -67,6 +68,30 @@ func TestFleetObservedPreservesBusy(t *testing.T) {
 	if srv.Busy != OpStop {
 		t.Errorf("Busy = %q, want %q", srv.Busy, OpStop)
 	}
+}
+
+// running is a task in flight against a server.
+func running(server string, kind tasks.Kind) TaskProgressed {
+	return TaskProgressed{At: at, Progress: tasks.Progress{
+		ID: string(kind) + "-1", Server: server, Kind: kind,
+		State: tasks.StateRunning, Steps: []string{string(kind)},
+		Est: []time.Duration{0},
+	}}
+}
+
+// stopping is a stop task that has read the game's plan and knows its grace.
+func stopping(server string, grace time.Duration) TaskProgressed {
+	p := running(server, tasks.KindStop)
+	p.Progress.Est = []time.Duration{grace}
+	return p
+}
+
+// finished is a task that completed against a server.
+func finished(server string, kind tasks.Kind) TaskProgressed {
+	return TaskProgressed{At: at, Progress: tasks.Progress{
+		ID: string(kind) + "-1", Server: server, Kind: kind,
+		State: tasks.StateDone, Steps: []string{string(kind)}, Cursor: 1,
+	}}
 }
 
 func TestFleetObservedDropsContainersThatVanished(t *testing.T) {
@@ -130,16 +155,15 @@ func TestFleetUnobservableNoticesOnlyTheTransition(t *testing.T) {
 	}
 }
 
-func TestOperationEndedClearsBusyAndReportsFailure(t *testing.T) {
+func TestFailedTaskClearsBusyAndReportsIt(t *testing.T) {
 	s := apply(Snapshot{},
 		observed(host.Container{Instance: "zomboid-main", State: model.StateStopped}),
-		OperationBegan{At: at, Server: "zomboid-main", Op: OpStart},
-		OperationEnded{
-			At:     at,
-			Server: "zomboid-main",
-			Op:     OpStart,
-			Err:    errors.New("zomboid-main: start: port 16261 already allocated"),
-		},
+		running("zomboid-main", tasks.KindStart),
+		TaskProgressed{At: at, Progress: tasks.Progress{
+			ID: "start-1", Server: "zomboid-main", Kind: tasks.KindStart,
+			State: tasks.StateFailed,
+			Err:   "zomboid-main: start: port 16261 already allocated",
+		}},
 	)
 
 	srv, _ := s.Server("zomboid-main")
@@ -159,11 +183,11 @@ func TestOperationEndedClearsBusyAndReportsFailure(t *testing.T) {
 
 // The engine reports what the container actually did. Writing an optimistic
 // "running" here is how a fleet view starts lying.
-func TestOperationEndedDoesNotInventState(t *testing.T) {
+func TestAFinishedTaskDoesNotInventState(t *testing.T) {
 	s := apply(Snapshot{},
 		observed(host.Container{Instance: "a", State: model.StateStopped}),
-		OperationBegan{At: at, Server: "a", Op: OpStart},
-		OperationEnded{At: at, Server: "a", Op: OpStart},
+		running("a", tasks.KindStart),
+		finished("a", tasks.KindStart),
 	)
 	if got := s.Servers[0].State; got != model.StateStopped {
 		t.Errorf("state = %v, want it left to the next poll", got)
@@ -189,7 +213,7 @@ func TestReducersDoNotMutatePublishedSnapshots(t *testing.T) {
 		host.Container{Instance: "b", State: model.StateRunning},
 	))
 
-	after := apply(before, OperationBegan{At: at, Server: "a", Op: OpStop})
+	after := apply(before, running("a", tasks.KindStop))
 
 	if before.Servers[0].Busy != OpNone {
 		t.Error("the earlier snapshot was mutated in place")
@@ -238,8 +262,8 @@ func TestRequestedStopIsNotACrash(t *testing.T) {
 
 	s := apply(Snapshot{},
 		observed(host.Container{Instance: "zomboid-main", State: model.StateRunning}),
-		OperationBegan{At: at, Server: "zomboid-main", Op: OpStop, Grace: 60 * time.Second},
-		OperationEnded{At: at, Server: "zomboid-main", Op: OpStop},
+		stopping("zomboid-main", 60*time.Second),
+		finished("zomboid-main", tasks.KindStop),
 		observed(killed),
 	)
 
@@ -260,7 +284,7 @@ func TestRequestedStopIsNotACrash(t *testing.T) {
 func TestKillWithNoRecordedGraceDoesNotInventANumber(t *testing.T) {
 	s := apply(Snapshot{},
 		observed(host.Container{Instance: "a", State: model.StateRunning}),
-		OperationEnded{At: at, Server: "a", Op: OpStop},
+		finished("a", tasks.KindStop),
 		observed(host.Container{Instance: "a", State: model.StateCrashed, ExitCode: 137}),
 	)
 
@@ -298,7 +322,7 @@ func TestBudget(t *testing.T) {
 func TestStopGraceIsVisibleWhileStopping(t *testing.T) {
 	s := apply(Snapshot{},
 		observed(host.Container{Instance: "a", State: model.StateRunning}),
-		OperationBegan{At: at, Server: "a", Op: OpStop, Grace: 120 * time.Second},
+		stopping("a", 120*time.Second),
 	)
 
 	srv, _ := s.Server("a")
@@ -328,7 +352,7 @@ func TestUnrequestedKillIsStillACrash(t *testing.T) {
 func TestOOMDuringARequestedStopStaysACrash(t *testing.T) {
 	s := apply(Snapshot{},
 		observed(host.Container{Instance: "a", State: model.StateRunning}),
-		OperationEnded{At: at, Server: "a", Op: OpStop},
+		finished("a", tasks.KindStop),
 		observed(host.Container{
 			Instance:  "a",
 			State:     model.StateCrashed,
@@ -351,8 +375,8 @@ func TestOOMDuringARequestedStopStaysACrash(t *testing.T) {
 func TestStartingRetiresTheStopRequest(t *testing.T) {
 	s := apply(Snapshot{},
 		observed(host.Container{Instance: "a", State: model.StateRunning}),
-		OperationEnded{At: at, Server: "a", Op: OpStop},
-		OperationBegan{At: at, Server: "a", Op: OpStart},
+		finished("a", tasks.KindStop),
+		running("a", tasks.KindStart),
 		observed(host.Container{Instance: "a", State: model.StateCrashed, ExitCode: 137}),
 	)
 
@@ -365,7 +389,7 @@ func TestStartingRetiresTheStopRequest(t *testing.T) {
 func TestObservingItRunningClearsTheStopRequest(t *testing.T) {
 	s := apply(Snapshot{},
 		observed(host.Container{Instance: "a", State: model.StateRunning}),
-		OperationEnded{At: at, Server: "a", Op: OpStop},
+		finished("a", tasks.KindStop),
 		observed(host.Container{Instance: "a", State: model.StateRunning}),
 		observed(host.Container{Instance: "a", State: model.StateCrashed, ExitCode: 137}),
 	)
@@ -380,7 +404,10 @@ func TestObservingItRunningClearsTheStopRequest(t *testing.T) {
 func TestFailedStopDoesNotCountAsRequested(t *testing.T) {
 	s := apply(Snapshot{},
 		observed(host.Container{Instance: "a", State: model.StateRunning}),
-		OperationEnded{At: at, Server: "a", Op: OpStop, Err: errors.New("a: stop: no such container")},
+		TaskProgressed{At: at, Progress: tasks.Progress{
+			ID: "stop-1", Server: "a", Kind: tasks.KindStop, State: tasks.StateFailed,
+			Err: "a: stop: no such container",
+		}},
 		observed(host.Container{Instance: "a", State: model.StateCrashed, ExitCode: 137}),
 	)
 

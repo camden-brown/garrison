@@ -32,6 +32,7 @@ import (
 	"github.com/camden-brown/garrison/internal/services/fleet"
 	"github.com/camden-brown/garrison/internal/services/logs"
 	"github.com/camden-brown/garrison/internal/services/metrics"
+	"github.com/camden-brown/garrison/internal/tasks"
 	"github.com/camden-brown/garrison/internal/tui"
 	"github.com/camden-brown/garrison/internal/tui/comp"
 	viewsall "github.com/camden-brown/garrison/internal/tui/views/all"
@@ -100,10 +101,15 @@ func setup(ctx context.Context, confDir, endpoint string, interval time.Duration
 	}
 
 	resolved, _ := driver.Endpoint()
-	store := core.New(core.Options{
-		Control:      &fleet.Controller{Driver: driver},
-		MetricLabels: metricLabels(),
-	})
+	servers := config.Store{Dir: filepath.Join(confDir, "servers")}
+
+	// The engine and the store need each other: the store submits tasks and
+	// the engine reports progress back. cmd is where that knot is tied,
+	// which is the same reason it is the only place the driver and the
+	// views are both named.
+	store := core.New(core.Options{MetricLabels: metricLabels(), Saver: servers})
+	engine := tasks.New(driver, resolver{store: store}, store, nil)
+	store.AttachTasks(engine)
 
 	// The two streamers follow containers; the poller tells everyone what
 	// exists. Neither service imports the store and the store imports
@@ -113,7 +119,6 @@ func setup(ctx context.Context, confDir, endpoint string, interval time.Duration
 	// is a later convenience; today an edit made with the tool open is
 	// picked up on the next launch, which the file being hand-editable is
 	// the whole point of.
-	servers := config.Store{Dir: filepath.Join(confDir, "servers")}
 	instances, problems := servers.LoadAll()
 	store.InstancesLoaded(ctx, instances)
 	for _, err := range problems {
@@ -134,6 +139,7 @@ func setup(ctx context.Context, confDir, endpoint string, interval time.Duration
 	}
 
 	run(func() { store.Run(ctx) })
+	run(func() { engine.Run(ctx) })
 	run(func() { stats.Run(ctx) })
 	run(func() { console.Run(ctx) })
 	run(func() {
@@ -149,6 +155,31 @@ func setup(ctx context.Context, confDir, endpoint string, interval time.Duration
 	})
 
 	return store, &wg, nil
+}
+
+// resolver tells the task engine what a server is. It reads the store rather
+// than the config directory so a task acts on the same picture the screen is
+// showing, including settings applied a moment ago.
+type resolver struct{ store *core.Store }
+
+func (r resolver) Instance(server string) (model.Instance, tasks.Game, error) {
+	srv, ok := r.store.Snapshot().Server(server)
+	if !ok {
+		return model.Instance{}, nil, fmt.Errorf("%s: no such server", server)
+	}
+
+	inst := srv.Instance
+	if inst.Name == "" {
+		// A container found by label with no config file. It can still be
+		// started and stopped; it just has no settings to compile.
+		inst = model.Instance{Name: srv.Name, Game: srv.Game}
+	}
+
+	g, err := games.Get(inst.Game)
+	if err != nil {
+		return inst, nil, fmt.Errorf("%s: %w", server, err)
+	}
+	return inst, g, nil
 }
 
 // fanOut sends each poll to everything that needs to know what is running.

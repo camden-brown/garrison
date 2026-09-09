@@ -2,21 +2,25 @@ package core
 
 import (
 	"context"
-	"errors"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/camden-brown/garrison/internal/host"
 	"github.com/camden-brown/garrison/internal/model"
+	"github.com/camden-brown/garrison/internal/tasks"
 )
 
-func testStore(t *testing.T, ctl Control) (*Store, context.Context) {
+func testStore(t *testing.T, engine Tasks) (*Store, context.Context) {
 	t.Helper()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	s := New(Options{Control: ctl, Now: func() time.Time { return at }})
+	s := New(Options{Now: func() time.Time { return at }})
+	if engine != nil {
+		s.AttachTasks(engine)
+	}
 
 	done := make(chan struct{})
 	go func() {
@@ -143,113 +147,180 @@ func TestRunClosesSubscriptionsOnShutdown(t *testing.T) {
 	}
 }
 
-type recordingControl struct {
-	started chan string
-	stopped chan string
-	err     error
+// recordingEngine stands in for the task engine, so the store's refusals and
+// submissions can be checked without running any steps.
+type recordingEngine struct {
+	mu        sync.Mutex
+	submitted []*tasks.Task
+	cancelled []string
+	seen      chan struct{}
 }
 
-func (c *recordingControl) Start(ctx context.Context, instance, id string) error {
-	c.started <- instance
-	return c.err
+func newEngine() *recordingEngine {
+	return &recordingEngine{seen: make(chan struct{}, 16)}
 }
 
-func (c *recordingControl) Stop(ctx context.Context, instance, id string) error {
-	c.stopped <- instance
-	return c.err
-}
+func (e *recordingEngine) ID(kind tasks.Kind) string { return string(kind) + "-1" }
 
-func (c *recordingControl) StopGrace(string) time.Duration { return 90 * time.Second }
-
-func newControl() *recordingControl {
-	return &recordingControl{
-		started: make(chan string, 4),
-		stopped: make(chan string, 4),
+func (e *recordingEngine) Submit(_ context.Context, t *tasks.Task) {
+	e.mu.Lock()
+	e.submitted = append(e.submitted, t)
+	e.mu.Unlock()
+	select {
+	case e.seen <- struct{}{}:
+	default:
 	}
 }
 
-func TestStartMarksBusyThenClears(t *testing.T) {
-	ctl := newControl()
-	s, ctx := testStore(t, ctl)
+func (e *recordingEngine) Cancel(_ context.Context, id string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.cancelled = append(e.cancelled, id)
+}
+
+func (e *recordingEngine) kinds() []tasks.Kind {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make([]tasks.Kind, 0, len(e.submitted))
+	for _, t := range e.submitted {
+		out = append(out, t.Kind)
+	}
+	return out
+}
+
+func (e *recordingEngine) waitFor(t *testing.T, what string) {
+	t.Helper()
+	select {
+	case <-e.seen:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for %s", what)
+	}
+}
+
+// An action is a task submission, not work the store does itself. Everything
+// slower than a frame goes through the engine — including this.
+func TestStartSubmitsATask(t *testing.T) {
+	engine := newEngine()
+	s, ctx := testStore(t, engine)
 	sub := s.Subscribe()
 
 	s.FleetObserved(ctx, at, []host.Container{{Instance: "a", State: model.StateStopped}})
 	waitFor(t, sub, "the fleet", func(s Snapshot) bool { return len(s.Servers) == 1 })
 
 	s.Start(ctx, "a")
+	engine.waitFor(t, "the task")
 
-	select {
-	case got := <-ctl.started:
-		if got != "a" {
-			t.Errorf("started %q, want a", got)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("Control.Start was never called")
+	if got := engine.kinds(); len(got) != 1 || got[0] != tasks.KindStart {
+		t.Errorf("submitted %v, want one start", got)
+	}
+}
+
+// What a server is busy with comes from the tasks in flight against it, so the
+// two cannot disagree — which they did when a task failed in a way that
+// skipped whatever was supposed to clear the flag.
+func TestBusyIsDerivedFromTheTask(t *testing.T) {
+	s, ctx := testStore(t, newEngine())
+	sub := s.Subscribe()
+
+	s.FleetObserved(ctx, at, []host.Container{{Instance: "a", State: model.StateRunning}})
+	waitFor(t, sub, "the fleet", func(s Snapshot) bool { return len(s.Servers) == 1 })
+
+	s.TaskProgressed(ctx, tasks.Progress{
+		ID: "stop-1", Server: "a", Kind: tasks.KindStop, State: tasks.StateRunning,
+		Steps: []string{"stop"},
+	})
+	snap := waitFor(t, sub, "the server to look busy", func(s Snapshot) bool {
+		srv, ok := s.Server("a")
+		return ok && srv.Busy == OpStop
+	})
+	if srv, _ := snap.Server("a"); srv.Busy.Present() != "stopping" {
+		t.Errorf("Busy reads as %q", srv.Busy.Present())
 	}
 
-	waitFor(t, sub, "busy to clear", func(s Snapshot) bool {
+	s.TaskProgressed(ctx, tasks.Progress{
+		ID: "stop-1", Server: "a", Kind: tasks.KindStop, State: tasks.StateDone,
+		Steps: []string{"stop"},
+	})
+	snap = waitFor(t, sub, "busy to clear", func(s Snapshot) bool {
 		srv, ok := s.Server("a")
 		return ok && srv.Busy == OpNone
 	})
+
+	// A completed stop is what lets a later non-zero exit read as a
+	// shutdown rather than a crash.
+	if srv, _ := snap.Server("a"); !srv.StopRequested {
+		t.Error("a completed stop task did not record that Garrison asked for it")
+	}
 }
 
-func TestFailedOperationBecomesANotice(t *testing.T) {
-	ctl := newControl()
-	ctl.err = errors.New("a: start: port 16261 already allocated")
-	s, ctx := testStore(t, ctl)
+func TestFailedTaskBecomesANotice(t *testing.T) {
+	s, ctx := testStore(t, newEngine())
 	sub := s.Subscribe()
 
-	s.FleetObserved(ctx, at, []host.Container{{Instance: "a", State: model.StateStopped}})
-	waitFor(t, sub, "the fleet", func(s Snapshot) bool { return len(s.Servers) == 1 })
-
-	s.Start(ctx, "a")
+	s.TaskProgressed(ctx, tasks.Progress{
+		ID: "t1", Server: "a", Kind: tasks.KindRestart, State: tasks.StateRolledBack,
+		Err: "a: stop: port 16261 already allocated",
+	})
 
 	snap := waitFor(t, sub, "the failure notice", func(s Snapshot) bool { return len(s.Notices) > 0 })
-	if snap.Notices[0].Text != "a: start: port 16261 already allocated" {
+	if snap.Notices[0].Text != "a: stop: port 16261 already allocated" {
 		t.Errorf("notice = %q", snap.Notices[0].Text)
 	}
 }
 
-// The answer arrives as a sentence on the status bar rather than as a Docker
-// error two seconds later.
+// A cancelled task is not a failure: the operator asked for it and already
+// knows, so it does not raise an alert.
+func TestCancelledTaskIsNotAnAlert(t *testing.T) {
+	s, ctx := testStore(t, newEngine())
+	sub := s.Subscribe()
+
+	s.TaskProgressed(ctx, tasks.Progress{ID: "t1", Server: "a", State: tasks.StateCanceled, Err: "cancelled"})
+	snap := waitFor(t, sub, "the task", func(s Snapshot) bool { return len(s.Tasks) == 1 })
+
+	if len(snap.Notices) != 0 {
+		t.Errorf("a cancellation raised %d notices, want none", len(snap.Notices))
+	}
+}
+
+// The answer arrives as a sentence rather than a task that fails two seconds
+// later for a reason the operator could have been told immediately.
 func TestOperationsThatCannotSucceedAreRefusedUpFront(t *testing.T) {
 	tests := []struct {
-		name  string
-		state model.State
-		op    func(*Store, context.Context)
-		want  string
+		name    string
+		state   model.State
+		created bool
+		op      func(*Store, context.Context)
+		want    string
 	}{
 		{
-			name:  "starting a running server",
-			state: model.StateRunning,
-			op:    func(s *Store, ctx context.Context) { s.Start(ctx, "a") },
-			want:  "a: start: already running",
+			name: "starting a running server", state: model.StateRunning, created: true,
+			op:   func(s *Store, ctx context.Context) { s.Start(ctx, "a") },
+			want: "a: start: already running",
 		},
 		{
-			name:  "stopping a stopped server",
-			state: model.StateStopped,
-			op:    func(s *Store, ctx context.Context) { s.Stop(ctx, "a") },
-			want:  "a: stop: already stopped",
+			name: "stopping a stopped server", state: model.StateStopped, created: true,
+			op:   func(s *Store, ctx context.Context) { s.Stop(ctx, "a") },
+			want: "a: stop: already stopped",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctl := newControl()
-			s, ctx := testStore(t, ctl)
+			engine := newEngine()
+			s, ctx := testStore(t, engine)
 			sub := s.Subscribe()
 
 			s.FleetObserved(ctx, at, []host.Container{{Instance: "a", State: tt.state}})
 			waitFor(t, sub, "the fleet", func(s Snapshot) bool { return len(s.Servers) == 1 })
 
 			tt.op(s, ctx)
-
 			snap := waitFor(t, sub, "the refusal", func(s Snapshot) bool { return len(s.Notices) > 0 })
+
 			if snap.Notices[0].Text != tt.want {
 				t.Errorf("notice = %q, want %q", snap.Notices[0].Text, tt.want)
 			}
-			if len(ctl.started)+len(ctl.stopped) != 0 {
-				t.Error("the driver was called for an operation that should have been refused")
+			if len(engine.kinds()) != 0 {
+				t.Error("a task was submitted for an operation that should have been refused")
 			}
 		})
 	}
@@ -258,24 +329,19 @@ func TestOperationsThatCannotSucceedAreRefusedUpFront(t *testing.T) {
 // Unknown means the state is stale, not that the server is gone. The honest
 // response to "start it anyway" is to try.
 func TestUnknownStateDoesNotBlockAnOperation(t *testing.T) {
-	ctl := newControl()
-	s, ctx := testStore(t, ctl)
+	engine := newEngine()
+	s, ctx := testStore(t, engine)
 	sub := s.Subscribe()
 
 	s.FleetObserved(ctx, at, []host.Container{{Instance: "a", State: model.StateUnknown}})
 	waitFor(t, sub, "the fleet", func(s Snapshot) bool { return len(s.Servers) == 1 })
 
 	s.Start(ctx, "a")
-
-	select {
-	case <-ctl.started:
-	case <-time.After(2 * time.Second):
-		t.Fatal("an operation on an unknown-state server was refused")
-	}
+	engine.waitFor(t, "the task")
 }
 
 func TestOperationOnAnUnknownServerIsReported(t *testing.T) {
-	s, ctx := testStore(t, newControl())
+	s, ctx := testStore(t, newEngine())
 	sub := s.Subscribe()
 
 	s.Start(ctx, "nope")
@@ -284,4 +350,65 @@ func TestOperationOnAnUnknownServerIsReported(t *testing.T) {
 	if snap.Notices[0].Text != "nope: start: no such server" {
 		t.Errorf("notice = %q", snap.Notices[0].Text)
 	}
+}
+
+// Applying gathers the draft onto the configured settings and hands the whole
+// instance to the task, so the task never has to merge anything.
+func TestApplySettingsSubmitsTheMergedInstance(t *testing.T) {
+	engine := newEngine()
+	saver := &countingSaver{}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	s := New(Options{Now: func() time.Time { return at }, Saver: saver})
+	s.AttachTasks(engine)
+	go s.Run(ctx)
+	sub := s.Subscribe()
+
+	s.InstancesLoaded(ctx, []model.Instance{{
+		Name: "a", Game: "valheim", Settings: map[string]any{"ServerName": "Old", "WorldName": "W"},
+	}})
+	s.FleetObserved(ctx, at, []host.Container{{Instance: "a", Game: "valheim", State: model.StateRunning}})
+	waitFor(t, sub, "the fleet", func(s Snapshot) bool { return len(s.Servers) == 1 })
+
+	s.EditSetting(ctx, "a", "ServerName", "New")
+	waitFor(t, sub, "the draft", func(s Snapshot) bool {
+		srv, ok := s.Server("a")
+		return ok && srv.Pending() == 1
+	})
+
+	s.ApplySettings(ctx, "a", true)
+	engine.waitFor(t, "the apply task")
+
+	if got := engine.kinds(); len(got) != 1 || got[0] != tasks.KindApplyConfig {
+		t.Fatalf("submitted %v, want one apply", got)
+	}
+}
+
+// Applying nothing does nothing rather than queueing a task that changes
+// nothing and reports success.
+func TestApplyingACleanFormDoesNothing(t *testing.T) {
+	engine := newEngine()
+	s, ctx := testStore(t, engine)
+	sub := s.Subscribe()
+
+	s.FleetObserved(ctx, at, []host.Container{{Instance: "a", State: model.StateRunning}})
+	waitFor(t, sub, "the fleet", func(s Snapshot) bool { return len(s.Servers) == 1 })
+
+	s.ApplySettings(ctx, "a", false)
+	if len(engine.kinds()) != 0 {
+		t.Error("applying a clean form submitted a task")
+	}
+}
+
+type countingSaver struct {
+	mu sync.Mutex
+	n  int
+}
+
+func (c *countingSaver) Save(model.Instance) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.n++
+	return nil
 }

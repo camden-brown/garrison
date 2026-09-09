@@ -17,6 +17,7 @@ import (
 	"github.com/camden-brown/garrison/internal/core"
 	"github.com/camden-brown/garrison/internal/host"
 	"github.com/camden-brown/garrison/internal/model"
+	"github.com/camden-brown/garrison/internal/tasks"
 	"github.com/camden-brown/garrison/internal/tui"
 	"github.com/camden-brown/garrison/internal/tui/comp"
 	"github.com/camden-brown/garrison/internal/tui/views/fleet"
@@ -117,14 +118,12 @@ func TestGoldenRenders(t *testing.T) {
 		},
 		{
 			name: "operation-in-flight", width: 92, height: 34,
-			snap: snapshot(core.OperationBegan{At: now, Server: "palworld-sat", Op: core.OpStart}),
+			snap: snapshot(taskRunning("palworld-sat", tasks.KindStart, 0)),
 		},
 		{
 			// A stop is a wait, not an instant, so the row says how long.
 			name: "stopping-with-grace", width: 92, height: 34,
-			snap: snapshot(core.OperationBegan{
-				At: now, Server: "zomboid-main", Op: core.OpStop, Grace: 60 * time.Second,
-			}),
+			snap: snapshot(taskRunning("zomboid-main", tasks.KindStop, 60*time.Second)),
 		},
 		{
 			// A stop Garrison asked for that had to be forced: the glyph
@@ -132,8 +131,8 @@ func TestGoldenRenders(t *testing.T) {
 			// because a server killed mid-write is a save you may not have.
 			name: "stopped-after-a-kill", width: 92, height: 34,
 			snap: snapshot(
-				core.OperationBegan{At: now, Server: "zomboid-main", Op: core.OpStop, Grace: 60 * time.Second},
-				core.OperationEnded{At: now, Server: "zomboid-main", Op: core.OpStop},
+				taskRunning("zomboid-main", tasks.KindStop, 60*time.Second),
+				taskDone("zomboid-main", tasks.KindStop),
 				core.FleetObserved{At: now, Containers: []host.Container{{
 					Instance: "zomboid-main",
 					Game:     "zomboid",
@@ -144,12 +143,11 @@ func TestGoldenRenders(t *testing.T) {
 		},
 		{
 			name: "failed-operation", width: 92, height: 34,
-			snap: snapshot(core.OperationEnded{
-				At:     now,
-				Server: "zomboid-testing",
-				Op:     core.OpStart,
-				Err:    errors.New("zomboid-testing: start: port 16261 already allocated"),
-			}),
+			snap: snapshot(core.TaskProgressed{At: now, Progress: tasks.Progress{
+				ID: "start-1", Server: "zomboid-testing", Kind: tasks.KindStart,
+				State: tasks.StateFailed,
+				Err:   "zomboid-testing: start: port 16261 already allocated",
+			}}),
 		},
 		{
 			name: "confirming-stop", width: 92, height: 34,
@@ -307,4 +305,20 @@ func frameFor(snap core.Snapshot) tui.Frame {
 		f.Server = snap.Servers[0].Name
 	}
 	return f
+}
+
+// taskRunning is a task in flight, with the grace its stop step revised to.
+func taskRunning(server string, kind tasks.Kind, grace time.Duration) core.TaskProgressed {
+	return core.TaskProgressed{At: now, Progress: tasks.Progress{
+		ID: string(kind) + "-1", Server: server, Kind: kind,
+		State: tasks.StateRunning, Steps: []string{"stop"},
+		Est: []time.Duration{grace},
+	}}
+}
+
+func taskDone(server string, kind tasks.Kind) core.TaskProgressed {
+	return core.TaskProgressed{At: now, Progress: tasks.Progress{
+		ID: string(kind) + "-1", Server: server, Kind: kind,
+		State: tasks.StateDone, Steps: []string{"stop"}, Cursor: 1,
+	}}
 }

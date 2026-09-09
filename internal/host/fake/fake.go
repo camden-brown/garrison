@@ -267,6 +267,7 @@ func (d *Driver) Create(ctx context.Context, inst model.Instance, plan model.Pla
 		PlanHash: host.PlanHash(plan),
 		State:    model.StateCreated,
 		Ports:    plan.Ports,
+		Health:   model.Health{OK: true},
 	}
 	d.Put(c)
 	return c.ID, nil
@@ -284,6 +285,11 @@ func (d *Driver) Start(ctx context.Context, id string) error {
 		c.Detail = ""
 		c.ExitCode = 0
 		c.Started = started
+		// A container with no healthcheck declared reports healthy, which
+		// is what the real driver does: absence of a check is not evidence
+		// of ill health. A fake that left this false would make every
+		// healthcheck step time out.
+		c.Health = model.Health{OK: true}
 	})
 }
 
