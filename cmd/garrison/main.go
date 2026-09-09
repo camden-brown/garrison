@@ -32,6 +32,7 @@ import (
 	"github.com/camden-brown/garrison/internal/services/fleet"
 	"github.com/camden-brown/garrison/internal/services/logs"
 	"github.com/camden-brown/garrison/internal/services/metrics"
+	sqlitestore "github.com/camden-brown/garrison/internal/store"
 	"github.com/camden-brown/garrison/internal/tasks"
 	"github.com/camden-brown/garrison/internal/tui"
 	"github.com/camden-brown/garrison/internal/tui/comp"
@@ -107,8 +108,21 @@ func setup(ctx context.Context, confDir, endpoint string, interval time.Duration
 	// the engine reports progress back. cmd is where that knot is tied,
 	// which is the same reason it is the only place the driver and the
 	// views are both named.
+	// The database is optional in the sense that everything works without
+	// it — the journal falls back to a nop and nothing survives a restart.
+	// It is not optional in the sense of being skipped quietly: a failure to
+	// open it is reported and the dashboard carries on, because a dashboard
+	// that will not start because its history file is unwritable is a
+	// dashboard missing when you need it.
+	var journal tasks.Journal
+	var dbErr error
+	db, dbErr := sqlitestore.Open(filepath.Join(confDir, "garrison.db"))
+	if dbErr == nil {
+		journal = db.Journal()
+	}
+
 	store := core.New(core.Options{MetricLabels: metricLabels(), Saver: servers})
-	engine := tasks.New(driver, resolver{store: store}, store, nil)
+	engine := tasks.New(driver, resolver{store: store}, store, journal)
 	store.AttachTasks(engine)
 
 	// The two streamers follow containers; the poller tells everyone what
@@ -123,6 +137,12 @@ func setup(ctx context.Context, confDir, endpoint string, interval time.Duration
 	store.InstancesLoaded(ctx, instances)
 	for _, err := range problems {
 		store.Send(ctx, core.NoticeRaised{At: time.Now(), Level: core.LevelError, Text: err.Error()})
+	}
+	if dbErr != nil {
+		store.Send(ctx, core.NoticeRaised{
+			At: time.Now(), Level: core.LevelError,
+			Text: "history is not being kept: " + dbErr.Error(),
+		})
 	}
 
 	stats := metrics.NewStreamer(driver, store)
@@ -140,6 +160,12 @@ func setup(ctx context.Context, confDir, endpoint string, interval time.Duration
 
 	run(func() { store.Run(ctx) })
 	run(func() { engine.Run(ctx) })
+	if db != nil {
+		run(func() {
+			housekeep(ctx, db)
+			db.Close()
+		})
+	}
 	run(func() { stats.Run(ctx) })
 	run(func() { console.Run(ctx) })
 	run(func() {
@@ -155,6 +181,40 @@ func setup(ctx context.Context, confDir, endpoint string, interval time.Duration
 	})
 
 	return store, &wg, nil
+}
+
+// housekeep trims the database on a slow timer.
+//
+// Every buffer in Garrison is bounded and the database is no exception: the
+// task journal, the cold metrics and the event log all have a horizon, and a
+// process left open for weeks is exactly the one that would otherwise find out
+// they do not.
+func housekeep(ctx context.Context, db *sqlitestore.DB) {
+	const (
+		every   = 6 * time.Hour
+		metrics = 30 * 24 * time.Hour // DESIGN §8: the cold tier is 30 days
+		events  = 90 * 24 * time.Hour // DESIGN §8: events are kept 90 days
+		history = 90 * 24 * time.Hour
+	)
+
+	prune := func() {
+		now := time.Now()
+		_, _ = db.Journal().Prune(now.Add(-history))
+		_, _ = db.PruneMetrics(now.Add(-metrics))
+		_, _ = db.PruneEvents(now.Add(-events))
+	}
+	prune()
+
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			prune()
+		}
+	}
 }
 
 // resolver tells the task engine what a server is. It reads the store rather

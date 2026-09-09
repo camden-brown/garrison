@@ -39,6 +39,7 @@ var banned = map[string][]string{
 	"internal/tasks":    {"internal/core", "internal/tui", "cmd/"},
 	"internal/services": {"internal/core", "internal/tui", "cmd/"},
 	"internal/config":   {"internal/core", "internal/tui", "internal/host", "internal/games", "cmd/"},
+	"internal/store":    {"internal/core", "internal/tui", "internal/games", "cmd/"},
 	"internal/core":     {"internal/tui", "cmd/"},
 	"internal/tui":      {"cmd/"},
 }
