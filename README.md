@@ -1,12 +1,29 @@
-# Garrison
+<h1 align="center">Garrison</h1>
 
-A terminal dashboard for running game servers in Docker on Windows. One window
-that shows every server you own — Project Zomboid, Valheim, Palworld, and
-whatever you install next month — and is also the place you change things.
+<p align="center">
+  <strong>A terminal dashboard for running game servers in Docker.</strong><br>
+  One window for every server you own — Project Zomboid, Valheim, Palworld,<br>
+  and whatever you install next month.
+</p>
 
-**Status: skeleton.** The architecture, the plugin interfaces and the
-dependency rule are in place and enforced by tests. There is no Docker driver
-and no TUI yet. See [Roadmap](#roadmap).
+<p align="center">
+  <a href="https://github.com/camden-brown/garrison/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/camden-brown/garrison/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="Go version" src="https://img.shields.io/github/go-mod/go-version/camden-brown/garrison">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-windows-0078d4">
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue"></a>
+  <img alt="Status" src="https://img.shields.io/badge/status-pre--alpha-orange">
+</p>
+
+<p align="center">
+  <img src="docs/mockup-fleet.png" alt="The Garrison fleet view: four game servers with state, load, player counts and running tasks, an attention pane and a live activity feed" width="900">
+</p>
+
+<p align="center">
+  <sub><b>Design mockup, not a running build.</b> The architecture and plugin interfaces
+  are in place; the TUI is not implemented yet. See <a href="#roadmap">Roadmap</a>.</sub>
+</p>
+
+---
 
 ## Why
 
@@ -15,44 +32,82 @@ everything after: re-learning each game's config format, re-deriving how to
 read its logs, re-writing a restart script, and rebuilding somewhere to see
 whether it is healthy — once per game, forever.
 
-Garrison makes that work a plugin. A new game is one Go package that declares
-its container plan, its settings, and how to read a line of its log. The
-dashboard, console, task engine, settings form, mod manager and backup flow are
-written once and work the same for every game.
+Garrison makes that work a plugin. A new game is **one Go package** that
+declares its container plan, its settings, and how to read a line of its log.
+The dashboard, console, task engine, settings form, mod manager and backup flow
+are written once and work the same for every game.
 
-## What it does
+## Features
 
-- **Fleet view** — every server, its state, load, who is connected, what tasks
-  are running against it. Readable from across the room in ambient mode.
-- **Control surface** — change a setting, install a mod, schedule a restart
-  that warns players first, take a backup, roll one back.
-- **Provisioner** — a wizard that turns "a game plugin plus a name" into a
-  running, port-mapped, volume-backed server. Ports are proposed by scanning
-  the live fleet, so the second Valheim server does not collide with the first.
+- **Fleet view** — every server on one line: state, CPU, memory, who is
+  connected, what task is running against it. State is encoded as a glyph, a
+  colour *and* a word, so it reads at a glance and survives a 16-colour
+  terminal.
+- **Live dashboards** — CPU, memory and player sparklines at 1-second
+  resolution, plus a fourth tile the game plugin supplies itself: zombies alive
+  for Zomboid, world-save duration for Valheim.
+- **Console with RCON** — classified log lines (chat, joins, saves, errors) and
+  a command input that routes to RCON, to container stdin, or explains why
+  neither is available. Repeated lines collapse to a `3×` counter so a
+  crash-looping mod cannot erase your history.
+- **Player tracking** — who is on now, seven days of sessions, and occupancy by
+  hour so you can pick a restart window that bothers nobody.
+- **Mod management** — load order that you can actually reorder, version and
+  update checks, conflict detection, and correlation between a mod's changelog
+  and the errors in your log.
+- **A real task engine** — restarts, updates, mod syncs and backups are durable
+  step sequences with declared rollback. A scheduled restart warns players,
+  saves, snapshots the volume, updates, and restores the snapshot if the
+  healthcheck fails.
+- **Schema-driven settings** — a form generated from the game plugin's own
+  field list, with impact badges (live / restart / recreate / wipe risk) and a
+  literal config-file diff before anything is written.
+- **A provisioner** — a wizard that turns "a game plus a name" into a running,
+  port-mapped, volume-backed server. Ports are proposed by scanning the live
+  fleet, so your second Valheim server does not collide with the first.
+- **Ambient mode** — drops the chrome, enlarges everything to a card per
+  server, slows refresh to 5 seconds. For the window you never close.
 
-## What it is not
+### What it is not
 
 - **Not a web panel.** No HTTP server, no auth model, no browser. Remote access
   is SSH to the box and run the binary.
-- **Not a Docker replacement.** Garrison never stores state Docker already
-  holds. Containers are labelled `garrison.managed=1`, so the fleet is
-  rediscoverable by listing containers — delete the config directory and it
-  finds its servers again.
+- **Not a Docker replacement.** Garrison stores no state Docker already holds.
+  Containers are labelled `garrison.managed=1`, so the fleet is rediscoverable
+  by listing containers — delete the config directory and it finds your servers
+  again.
 - **Not multi-user.** One operator, one machine.
 
-## Build
+## Getting started
 
-Go is fully supported on Windows; this builds to a single native `.exe` with no
-runtime and no container.
+### Prerequisites
 
-```
+- **Windows 10/11** with [Windows Terminal](https://aka.ms/terminal) — the
+  status glyphs and block-element sparklines need its font handling
+- **Docker Desktop**, reachable at `npipe:////./pipe/docker_engine`
+- **Go 1.23+** to build (or use the container build below)
+
+Linux and macOS should work — the code is portable and CI builds on Linux — but
+Windows is the target and the only platform being tested by hand.
+
+### Install
+
+```console
+git clone https://github.com/camden-brown/garrison.git
+cd garrison
 go build -o garrison.exe ./cmd/garrison
 ```
 
-If you would rather not install the Go toolchain, use a container as a *build
-step* — which is different from running the tool in one:
+Go is fully supported on Windows: that produces a single native executable with
+no runtime, no VM and no container.
 
-```
+<details>
+<summary>Building without installing Go</summary>
+
+Use a container as a *build step*, which is a different thing from running the
+tool in one:
+
+```console
 docker run --rm -v "${PWD}:/src" -w /src \
   -e GOOS=windows -e GOARCH=amd64 \
   golang:1 go build -o garrison.exe ./cmd/garrison
@@ -61,30 +116,118 @@ docker run --rm -v "${PWD}:/src" -w /src \
 The tool itself stays a normal Windows process, so it keeps the clipboard,
 Credential Manager, and the ability to still be on screen while the Docker
 daemon is restarting.
+</details>
 
-### Tests
+### Usage
+
+```console
+garrison                          # open the TUI
+garrison status                   # one-line summary of every server
+garrison restart zomboid-main --drain 15m
+garrison backup zomboid-main --keep 14
+```
+
+Every action in the TUI is also a subcommand, because the day you want one in
+Task Scheduler you will want it badly. The TUI and the CLI are peers over the
+same core; neither wraps the other.
+
+### Configuration
 
 ```
-go test ./...
+%APPDATA%\Garrison\
+  garrison.toml            # docker endpoint, data root, theme, intervals
+  garrison.db              # SQLite: tasks, sessions, events, metrics, backups
+  servers\<name>.toml      # one file per server — the whole state of it
 ```
 
-Everything runs with Docker stopped. Plugin functions are pure, store mutations
-are reducers, and task steps run against a fake `host.Driver`. The one test
-that needs a real engine sits behind `//go:build integration`.
+Server files are human-readable TOML you can edit with the tool closed:
 
-## Architecture at a glance
+```toml
+game  = "zomboid"
+image = "renegademaster/zomboid-dedicated-server:1.6.1"
+data  = 'D:\gameservers\zomboid-main\data'
+
+[resources]
+memory = "12GiB"
+cpus   = 8
+
+[[ports]]
+container = "16261/udp"
+host      = 16261
+
+[settings]                 # keys are the game's own, validated against its schema
+MaxPlayers = 16
+PVP        = false
+PauseEmpty = true
+
+[[mods]]                   # order in the file is the load order
+id = "2822286426"
+pin = "2.11.0"             # omit to track latest
+
+[[schedule]]
+kind   = "restart"
+cron   = "0 2 * * *"
+drain  = "15m"
+policy = "skip-if-occupied"
+```
+
+Passwords do not go here — they live in Windows Credential Manager under
+`garrison/<instance>/<key>`, so this directory is safe to sync or commit.
+
+## Keybindings
+
+Vim-adjacent where vim has an opinion, mnemonic where it does not. A key means
+the same thing in every view or it does not exist. Lowercase is safe;
+**uppercase is destructive** and always confirms.
+
+| Key | Action |
+| --- | --- |
+| <kbd>1</kbd>–<kbd>7</kbd> | Dashboard, Console, Players, Mods, Settings, Tasks, Backups |
+| <kbd>f</kbd> | Fleet view |
+| <kbd>[</kbd> <kbd>]</kbd> | Previous / next server, keeping the current view |
+| <kbd>Ctrl</kbd>+<kbd>P</kbd> | Fuzzy palette over servers, views and verbs |
+| <kbd>:</kbd> | Command line — `:drain 15m`, `:mods add <id>` |
+| <kbd>/</kbd> | Filter the current view |
+| <kbd>Tab</kbd> | Cycle focus: servers → views → stage |
+| <kbd>u</kbd> / <kbd>S</kbd> | Start / stop |
+| <kbd>r</kbd> / <kbd>U</kbd> | Restart (offers a drain) / update |
+| <kbd>b</kbd> / <kbd>B</kbd> | Backup now / restore |
+| <kbd>n</kbd> / <kbd>X</kbd> | New server wizard / delete server |
+| <kbd>F</kbd> | Ambient mode |
+| <kbd>Space</kbd> | Freeze auto-refresh and log follow |
+| <kbd>?</kbd> | Help overlay, generated from the live keymap |
+
+## Supported games
+
+The point of the table is the ragged right-hand side. These games agree on
+almost nothing, and the UI does not care.
+
+| | Zomboid | Valheim | Palworld |
+| --- | :-: | :-: | :-: |
+| Steam app id | `380870` | `896660` | `2394010` |
+| Player list | RCON | log-derived | REST API |
+| Console | RCON | — | RCON |
+| Graceful drain | ✅ | partial | ✅ |
+| Mods | Workshop | Thunderstore | — |
+| Config files written | 2 | 0 (env) | 1 |
+
+A game implementing none of the optional capabilities still gets a dashboard,
+console, settings, tasks and backups — it just gets a Players view that
+explains itself instead of an empty table.
+
+## Architecture
 
 Imports go one direction and never back:
 
 ```
 model              leaf — shared types, imports nothing of ours
-  ^
+  ↑
 games   host       describe vs. execute; neither imports the other
-  ^       ^
+  ↑       ↑
 tasks   services
-  ^
+  ↑
 core               the store: one writer, immutable snapshots
-  ^
+  ↑
 tui  ·  cmd        two peers, both consumers of core
 ```
 
@@ -103,47 +246,58 @@ builds one.
 
 | To add | You write | You do not touch |
 | --- | --- | --- |
-| A game | `internal/games/<name>/` + one line in `games/all.go` | any view, the task engine, the settings form |
-| A view | `internal/tui/views/<name>/` + one line in `views/all.go` | the shell, the rail, the keymap overlay |
+| A game | `internal/games/<name>/` + a line in `games/all.go` | any view, the task engine, the settings form |
+| A view | `internal/tui/views/<name>/` + a line in `views/all.go` | the shell, the rail, the keymap overlay |
 | A task kind | a `Kind` and a `[]Step` builder | progress, cancellation, persistence, lanes |
 | A setting | one `games.Field` in that game's `Schema()` | the form, validation, the diff, the confirm modal |
-| A metric | return `model.Event{Metric, Value}` from `Parse` | the metric rings, the sparkline, the tile |
+| A metric | `model.Event{Metric, Value}` from `Parse` | the metric rings, the sparkline, the tile |
 | A runtime | one `host.Driver` implementation | everything above `internal/host` |
 
-`internal/games/caps.go` holds the optional capability interfaces. A game
-implementing none of them still gets a dashboard, console, settings, tasks and
-backups; it just gets a Players view that explains itself instead of an empty
-table. Reaching for a `switch` on `Meta().ID` outside `internal/games` means a
-capability interface is missing.
+Reaching for a `switch` on a game's ID outside `internal/games` means a
+capability interface is missing. That is the smell that matters most.
+
+Full design — screens, keymap, pipelines, task engine, on-disk layout and
+risks — is in **[`docs/DESIGN.md`](docs/DESIGN.md)**.
+
+## Development
+
+```console
+go build ./...                    # build everything
+go test ./...                     # runs with Docker stopped
+go vet ./...
+gofmt -l .
+
+GOOS=windows GOARCH=amd64 go build ./cmd/garrison
+go test -tags integration ./...   # the one test that needs a real engine
+```
+
+The suite is designed to run without Docker. Plugin functions are pure (table
+tests against captured log fixtures in `testdata/`), store mutations are
+reducers, task steps run against a fake `host.Driver`, and views get golden
+renders at 120×34 and 80×24 with the colour profile pinned.
 
 ## Roadmap
 
-- **M0** — `host.Driver` with a Docker implementation, the store, and a fleet
-  list that can start and stop containers. Proves the named pipe and the render
-  loop on real hardware.
-- **M1** — stats and log streaming, the dashboard with sparklines. Extract the
-  `Game` interface and move Valheim behind it. First milestone worth leaving
-  open.
-- **M2** — the task engine: lanes, steps, compensation, persistence. Restart
-  and backup first, then update. Scheduler last.
-- **M3** — Zomboid, which is the real test of the interface: two config files
-  in two syntaxes, RCON, Workshop mods with load order. Plus the schema-driven
-  settings form and the apply diff.
-- **M4** — players and mods, session history, occupancy. Palworld as the third
-  game, to confirm that a game with no mods degrades cleanly.
-- **M5** — the new-server wizard, restore, ambient mode, command palette, CLI
-  subcommands, 80-column layouts.
+| | Milestone | |
+| :-: | --- | --- |
+| **M0** | Driver and fleet list | `host.Driver` over the named pipe, the store, start/stop. Proves the pipe and the render loop on real hardware. |
+| **M1** | Live truth | Stats and log streaming, the dashboard with sparklines. First milestone worth leaving open. |
+| **M2** | Task engine | Lanes, steps, compensation, persistence. Restart and backup first, then update. Scheduler last. |
+| **M3** | Second game | Zomboid: two config syntaxes, RCON, Workshop mods with load order. Plus the settings form and apply diff. |
+| **M4** | Players and mods | Session history, occupancy, the Mods view. Palworld as the third game. |
+| **M5** | Provisioning and polish | The wizard, restore, ambient mode, command palette, CLI subcommands, 80-column layouts. |
 
 Valheim goes first deliberately: it is the simplest plugin and it has **no
 RCON**, which forces log-derived player state early rather than letting the
 design assume RCON exists.
 
-## Documentation
+## Contributing
 
-[`docs/DESIGN.md`](docs/DESIGN.md) is the full design — screens, keymap,
-architecture, the plugin interfaces, the data pipelines, the task engine, the
-on-disk layout, and the risks worth knowing about before starting.
+It is early — the interfaces will move. If you want a game supported, opening
+an issue with its config format, a sample of its server log, and whether it has
+RCON is genuinely the most useful thing, because those three facts are most of
+a plugin.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+[MIT](LICENSE)
