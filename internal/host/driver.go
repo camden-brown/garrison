@@ -57,6 +57,13 @@ const (
 	LabelPlanHash = "garrison.plan"
 )
 
+// NamePrefix is prepended to an instance name to make a container name, so
+// `docker ps` is readable and Garrison's containers sort together.
+const NamePrefix = "garrison-"
+
+// ContainerName is the container Garrison creates for an instance.
+func ContainerName(instance string) string { return NamePrefix + instance }
+
 // Container is the observed state of one managed container.
 type Container struct {
 	ID       string
@@ -64,37 +71,13 @@ type Container struct {
 	Instance string // from LabelInstance
 	Game     string // from LabelGame
 	PlanHash string // from LabelPlanHash
-	State    State
+	State    model.State
+	Detail   string // why State is what it is: "OOM killed", "paused", "unhealthy: …"
 	ExitCode int
 	Started  time.Time
 	Restarts int // consecutive restarts, for crash-loop detection
 	Health   model.Health
 	Ports    []model.PortMap
-}
-
-// State is a container's lifecycle state, collapsed to what the UI encodes.
-type State uint8
-
-const (
-	// StateUnknown means the engine could not be reached. It is deliberately
-	// distinct from StateStopped.
-	StateUnknown State = iota
-	StateCreated
-	StateRunning
-	StateRestarting
-	StateStopped
-	StateCrashed
-)
-
-var stateNames = [...]string{
-	"unknown", "created", "running", "restarting", "stopped", "crashed",
-}
-
-func (s State) String() string {
-	if int(s) < len(stateNames) {
-		return stateNames[s]
-	}
-	return "unknown"
 }
 
 // Sample is one point of container resource usage.
