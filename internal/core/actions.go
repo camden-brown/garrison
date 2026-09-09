@@ -90,6 +90,53 @@ func (s *Store) DiscardDraft(ctx context.Context, instance string) {
 	s.Send(ctx, DraftDiscarded{At: s.now(), Server: instance})
 }
 
+// Backup archives a server's data directory.
+func (s *Store) Backup(ctx context.Context, instance string) {
+	if s.archives == nil {
+		s.raise(ctx, instance, fmt.Errorf("%s: backup: nowhere to write archives", instance))
+		return
+	}
+	s.submit(ctx, instance, tasks.KindBackup, func(id string) *tasks.Task {
+		return tasks.Backup(id, instance, tasks.TriggerManual, s.archives.For(instance), s.keepBackups)
+	})
+}
+
+// Players is how many are connected to a server, and whether that is known at
+// all. It is the scheduler's window onto the fleet: not knowing is not the
+// same as nobody being there.
+func (s *Store) Players(server string) (int, bool) {
+	srv, ok := s.Snapshot().Server(server)
+	if !ok || !srv.State.Live() {
+		return 0, false
+	}
+	return len(srv.Players), true
+}
+
+// SubmitScheduled queues a task the scheduler decided is due.
+func (s *Store) SubmitScheduled(ctx context.Context, server string, kind tasks.Kind, trigger tasks.Trigger) {
+	switch kind {
+	case tasks.KindRestart:
+		s.submit(ctx, server, kind, func(id string) *tasks.Task {
+			return tasks.Restart(id, server, trigger)
+		})
+	case tasks.KindBackup:
+		if s.archives == nil {
+			return
+		}
+		s.submit(ctx, server, kind, func(id string) *tasks.Task {
+			return tasks.Backup(id, server, trigger, s.archives.For(server), s.keepBackups)
+		})
+	default:
+		s.raise(ctx, server, fmt.Errorf("%s: %s cannot be scheduled yet", server, kind))
+	}
+}
+
+// Notify reports something the scheduler decided, which is how a deferred job
+// reaches the operator instead of only the log.
+func (s *Store) Notify(ctx context.Context, server, text string) {
+	s.Send(ctx, NoticeRaised{At: s.now(), Level: LevelWarn, Server: server, Text: text})
+}
+
 // CancelTask asks the engine to stop one. It compensates rather than simply
 // stopping, so the world is left where it started.
 func (s *Store) CancelTask(ctx context.Context, id string) {

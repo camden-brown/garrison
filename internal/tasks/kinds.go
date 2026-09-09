@@ -68,6 +68,125 @@ func ApplyConfig(id, server string, trigger Trigger, next model.Instance, save S
 	return &Task{ID: id, Server: server, Kind: KindApplyConfig, Trigger: trigger, Steps: steps}
 }
 
+// Archiver takes and prunes backups. Declared here so this package does not
+// import internal/services/backup.
+type Archiver interface {
+	Create(ctx context.Context, src string, at time.Time) (path string, bytes int64, err error)
+	Prune(keep int) ([]string, error)
+}
+
+// Backup archives a server's data directory.
+//
+// A hot copy by default: DESIGN offers Quiesce for games that can pause their
+// writes, and a game that cannot gets an archive taken while it plays. That is
+// the honest trade — a slightly inconsistent backup you have beats a
+// consistent one you skipped because it needed downtime.
+func Backup(id, server string, trigger Trigger, archive Archiver, keep int) *Task {
+	return &Task{
+		ID: id, Server: server, Kind: KindBackup, Trigger: trigger,
+		Steps: []Step{quiesceStep(), snapshotStep(archive), pruneStep(archive, keep)},
+	}
+}
+
+// quiesceStep pauses writes for games that can, and says so for games that
+// cannot rather than pretending the archive is consistent.
+func quiesceStep() Step {
+	return Step{
+		Name: "quiesce",
+		Est:  2 * time.Second,
+		Run: func(ctx context.Context, s *StepCtx) error {
+			q, ok := s.Game.(interface {
+				Quiesce(context.Context) (func(), error)
+			})
+			if !ok {
+				s.Say("this game cannot pause writes; taking a hot copy")
+				return nil
+			}
+			release, err := q.Quiesce(ctx)
+			if err != nil {
+				return err
+			}
+			s.Set("release", release)
+			s.Say("writes paused")
+			return nil
+		},
+		// Releasing is the compensation and also what the next step does on
+		// the way out. It must always be safe to call, which is the
+		// contract games.Backupable states.
+		Undo: func(ctx context.Context, s *StepCtx) error {
+			releaseWrites(s)
+			return nil
+		},
+	}
+}
+
+func snapshotStep(archive Archiver) Step {
+	return Step{
+		Name: "snapshot volume",
+		Est:  30 * time.Second,
+		Run: func(ctx context.Context, s *StepCtx) error {
+			defer releaseWrites(s)
+
+			if s.Instance.Data == "" {
+				return errors.New("no data directory configured, so there is nothing to archive")
+			}
+
+			path, size, err := archive.Create(ctx, s.Instance.Data, time.Now())
+			if err != nil {
+				return err
+			}
+			s.Set("archive", path)
+			s.Say(fmt.Sprintf("archived %s", humanBytes(size)))
+			return nil
+		},
+	}
+}
+
+// pruneStep keeps the newest few. It has no compensation on purpose: deleting
+// old backups is not something to undo, and re-creating them is not possible.
+func pruneStep(archive Archiver, keep int) Step {
+	return Step{
+		Name: "prune old backups",
+		Est:  time.Second,
+		Run: func(ctx context.Context, s *StepCtx) error {
+			if keep <= 0 {
+				return nil
+			}
+			removed, err := archive.Prune(keep)
+			if err != nil {
+				return err
+			}
+			if len(removed) > 0 {
+				s.Say(fmt.Sprintf("removed %d older backup(s), keeping %d", len(removed), keep))
+			}
+			return nil
+		},
+	}
+}
+
+// releaseWrites resumes a paused game, at most once.
+func releaseWrites(s *StepCtx) {
+	release, ok := s.Values["release"].(func())
+	if !ok || release == nil {
+		return
+	}
+	delete(s.Values, "release")
+	release()
+}
+
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for v := n / unit; v >= unit && exp < 3; v /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGT"[exp])
+}
+
 // stopStep asks the server to leave, with the signal and grace its game wants.
 func stopStep() Step {
 	return Step{

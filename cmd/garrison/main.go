@@ -29,9 +29,11 @@ import (
 	"github.com/camden-brown/garrison/internal/host"
 	"github.com/camden-brown/garrison/internal/host/docker"
 	"github.com/camden-brown/garrison/internal/model"
+	"github.com/camden-brown/garrison/internal/services/backup"
 	"github.com/camden-brown/garrison/internal/services/fleet"
 	"github.com/camden-brown/garrison/internal/services/logs"
 	"github.com/camden-brown/garrison/internal/services/metrics"
+	"github.com/camden-brown/garrison/internal/services/scheduler"
 	sqlitestore "github.com/camden-brown/garrison/internal/store"
 	"github.com/camden-brown/garrison/internal/tasks"
 	"github.com/camden-brown/garrison/internal/tui"
@@ -121,7 +123,19 @@ func setup(ctx context.Context, confDir, endpoint string, interval time.Duration
 		journal = db.Journal()
 	}
 
-	store := core.New(core.Options{MetricLabels: metricLabels(), Saver: servers})
+	// The archive store needs to read the fleet to find a server's data
+	// directory, and the fleet lives in the store being constructed. The
+	// indirection is a pointer filled in immediately below rather than a
+	// nil that would surface as a confusing failure the first time somebody
+	// pressed the backup key.
+	arch := &archives{}
+	store := core.New(core.Options{
+		MetricLabels: metricLabels(),
+		Saver:        servers,
+		Archives:     arch,
+		KeepBackups:  defaultKeepBackups,
+	})
+	arch.store = store
 	engine := tasks.New(driver, resolver{store: store}, store, journal)
 	store.AttachTasks(engine)
 
@@ -173,6 +187,19 @@ func setup(ctx context.Context, confDir, endpoint string, interval time.Duration
 		poller.Run(ctx, observer)
 	})
 
+	// The scheduler is started last and seeded first, so opening Garrison
+	// at ten in the morning does not immediately run the restart that was
+	// due at four.
+	jobs, badCron := scheduler.JobsFrom(instances)
+	for _, err := range badCron {
+		store.Send(ctx, core.NoticeRaised{At: time.Now(), Level: core.LevelError, Text: err.Error()})
+	}
+	if len(jobs) > 0 {
+		sched := scheduler.New(schedule{store: store, jobs: jobs})
+		sched.Seed()
+		run(func() { sched.Run(ctx) })
+	}
+
 	store.Send(ctx, core.EngineResolved{
 		At:        time.Now(),
 		Endpoint:  resolved,
@@ -215,6 +242,74 @@ func housekeep(ctx context.Context, db *sqlitestore.DB) {
 			prune()
 		}
 	}
+}
+
+// defaultKeepBackups is how many archives survive per server until the wizard
+// asks. Fourteen is two weeks of nightlies, which is long enough to notice a
+// world has gone wrong and short enough not to fill a disk unattended.
+const defaultKeepBackups = 14
+
+// archives gives each server its own backup directory, beside its data.
+//
+// DESIGN §11 puts backups next to the world they came from rather than in a
+// central place, so moving a server means moving one directory.
+type archives struct{ store *core.Store }
+
+func (a *archives) For(server string) tasks.Archiver {
+	return &serverArchive{store: a.store, server: server}
+}
+
+type serverArchive struct {
+	store  *core.Store
+	server string
+}
+
+func (s *serverArchive) dir() string {
+	if s.store == nil {
+		return ""
+	}
+	srv, ok := s.store.Snapshot().Server(s.server)
+	if !ok || srv.Instance.Data == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(srv.Instance.Data), "backups")
+}
+
+func (s *serverArchive) Create(ctx context.Context, src string, at time.Time) (string, int64, error) {
+	dir := s.dir()
+	if dir == "" {
+		return "", 0, fmt.Errorf("%s: no data directory configured, so there is nowhere to put a backup", s.server)
+	}
+	a, err := backup.Store{Dir: dir}.Create(ctx, src, at)
+	if err != nil {
+		return "", 0, err
+	}
+	return a.Path, a.Bytes, nil
+}
+
+func (s *serverArchive) Prune(keep int) ([]string, error) {
+	dir := s.dir()
+	if dir == "" {
+		return nil, nil
+	}
+	return backup.Store{Dir: dir}.Prune(keep)
+}
+
+// schedule is the scheduler's window onto the store plus the configured jobs.
+type schedule struct {
+	store *core.Store
+	jobs  []scheduler.Job
+}
+
+func (s schedule) Players(server string) (int, bool) { return s.store.Players(server) }
+func (s schedule) Schedules() []scheduler.Job        { return s.jobs }
+
+func (s schedule) Submit(ctx context.Context, server string, kind tasks.Kind, trigger tasks.Trigger) {
+	s.store.SubmitScheduled(ctx, server, kind, trigger)
+}
+
+func (s schedule) Notify(ctx context.Context, server, text string) {
+	s.store.Notify(ctx, server, text)
 }
 
 // resolver tells the task engine what a server is. It reads the store rather

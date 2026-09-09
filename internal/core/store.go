@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/camden-brown/garrison/internal/tasks"
 )
 
 // Store holds the snapshot and is the only thing that writes it.
@@ -22,6 +24,8 @@ type Store struct {
 	muts         chan Mutation
 	tasks        Tasks
 	saver        Saver
+	archives     Archives
+	keepBackups  int
 	now          func() time.Time
 	metricLabels map[string]string
 }
@@ -36,6 +40,15 @@ type Options struct {
 
 	// Saver writes server configuration, for the apply task.
 	Saver Saver
+
+	// Archives supplies a backup store per server. Nil means backups
+	// report that there is nowhere to write them.
+	Archives Archives
+
+	// KeepBackups is how many archives to keep per server. Zero keeps them
+	// all, which is a choice somebody should make rather than a default
+	// that quietly fills a disk — the wizard will propose a number.
+	KeepBackups int
 
 	// Now is the clock, injectable so reducer tests are not timing tests.
 	Now func() time.Time
@@ -64,10 +77,17 @@ func New(opts Options) *Store {
 		muts:         make(chan Mutation, opts.Buffer),
 		tasks:        opts.Tasks,
 		saver:        opts.Saver,
+		archives:     opts.Archives,
+		keepBackups:  opts.KeepBackups,
 		now:          opts.Now,
 		metricLabels: opts.MetricLabels,
 		snap:         Snapshot{At: opts.Now()},
 	}
+}
+
+// Archives resolves a server to its backup store.
+type Archives interface {
+	For(server string) tasks.Archiver
 }
 
 // AttachTasks gives the store its engine.
