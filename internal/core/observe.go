@@ -24,3 +24,8 @@ func (s *Store) FleetObserved(ctx context.Context, at time.Time, containers []ho
 func (s *Store) FleetUnobservable(ctx context.Context, at time.Time, err error) {
 	s.Send(ctx, FleetUnobservable{At: at, Err: err})
 }
+
+// StatsSampled records one point from a container's stats stream.
+func (s *Store) StatsSampled(ctx context.Context, instance string, sample host.Sample) {
+	s.Send(ctx, StatsSampled{At: s.now(), Server: instance, Sample: sample})
+}

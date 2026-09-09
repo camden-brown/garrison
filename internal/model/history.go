@@ -1,16 +1,4 @@
-// Package metrics keeps bounded histories of the numbers that change
-// continuously: CPU, memory, network, players, and whatever fourth metric a
-// game's Parse emits.
-//
-// Everything here is a value, not a buffer with a pointer to it. That is not
-// style: these histories live inside core.Snapshot, snapshots are handed to a
-// renderer on another goroutine, and a history the producer could still append
-// to is a sparkline drawn from a row that changed halfway through. Adding a
-// sample returns a new history and leaves the old one alone.
-//
-// Everything is also bounded. Garrison is meant to be left open for weeks, so
-// a history that grows is a leak with a long fuse.
-package metrics
+package model
 
 import "time"
 
@@ -46,17 +34,28 @@ type Point struct {
 	Max  float64
 }
 
-// Tiered is one measured quantity at two in-memory resolutions.
+// History is one measured quantity at two in-memory resolutions: CPU, memory,
+// players, or whatever fourth metric a game's Parse emits.
+//
+// It is a value, not a buffer with a pointer to it. That is not style: a
+// History lives inside core.Snapshot, snapshots are handed to a renderer on
+// another goroutine, and a history the producer could still append to is a
+// sparkline drawn from a row that changed halfway through. Add returns a new
+// History and leaves the old one alone.
+//
+// It lives in model rather than in the service that fills it for the same
+// reason State does: a service produces it and a view renders it, so it is
+// shared vocabulary and neither end should have to import the other.
 //
 // The zero value is an empty history and is ready to use. Add returns the new
-// history rather than modifying this one, so a Tiered already published inside
+// history rather than modifying this one, so a History already published inside
 // a snapshot can never change.
 //
 // The cold tier is not stored here. It is 30 days of history and belongs in
 // SQLite, which arrives with the task engine's persistence at M2. Add returns
 // completed cold points so the caller can hand them onward; today nothing
 // does, and they are discarded.
-type Tiered struct {
+type History struct {
 	Hot  []Point // 1s resolution, newest last, at most HotCap
 	Warm []Point // 10s resolution, newest last, at most WarmCap
 
@@ -70,7 +69,7 @@ type Tiered struct {
 // with ok true. Downsampling happens here rather than on a timer: the
 // arithmetic is a few additions, so there is no second goroutine to shut down
 // and no window in which the coarser tiers are stale.
-func (t Tiered) Add(at time.Time, v float64) (next Tiered, cold Point, ok bool) {
+func (t History) Add(at time.Time, v float64) (next History, cold Point, ok bool) {
 	t.Hot = appendBounded(t.Hot, Point{At: at, Mean: v, Min: v, Max: v}, HotCap)
 
 	t.pendingWarm.add(at, v)
@@ -96,7 +95,7 @@ func (t Tiered) Add(at time.Time, v float64) (next Tiered, cold Point, ok bool) 
 }
 
 // Last is the most recent raw sample — the live number beside the sparkline.
-func (t Tiered) Last() (Point, bool) {
+func (t History) Last() (Point, bool) {
 	if len(t.Hot) == 0 {
 		return Point{}, false
 	}
@@ -105,10 +104,10 @@ func (t Tiered) Last() (Point, bool) {
 
 // HotTail returns the newest n hot points, which is what a sparkline of a
 // known width asks for. Asking for more than it holds returns what it has.
-func (t Tiered) HotTail(n int) []Point { return tail(t.Hot, n) }
+func (t History) HotTail(n int) []Point { return tail(t.Hot, n) }
 
 // WarmTail is the same for the 10-second tier.
-func (t Tiered) WarmTail(n int) []Point { return tail(t.Warm, n) }
+func (t History) WarmTail(n int) []Point { return tail(t.Warm, n) }
 
 func tail(pts []Point, n int) []Point {
 	if n <= 0 || len(pts) == 0 {

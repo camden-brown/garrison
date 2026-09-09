@@ -65,6 +65,17 @@ type Server struct {
 	// pressed rather than five seconds later when the poll catches up.
 	Busy Op
 
+	// CPU and Mem are the sampled histories behind the dashboard's
+	// sparklines and live numbers. They are empty until the server is up and
+	// a stats stream has been open for a second.
+	CPU model.History
+	Mem model.History
+
+	// MemLimit is what the container is capped at, for the "6.1 / 8 GiB"
+	// reading. Zero means uncapped, which is a bad idea for a game server
+	// and something the wizard never proposes.
+	MemLimit int64
+
 	// StopGrace is how long the stop in flight will wait before killing, and
 	// afterwards how long the one that killed it waited. It is what lets both
 	// "stopping… up to 60s" and "killed after 60s grace" name a real number

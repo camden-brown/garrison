@@ -35,10 +35,15 @@ type FleetObserved struct {
 func (m FleetObserved) apply(s Snapshot) Snapshot {
 	// Busy and StopRequested are Garrison's own knowledge, not the engine's,
 	// so they survive the observation that would otherwise overwrite them.
+	// Histories, like Busy, are Garrison's own knowledge rather than the
+	// engine's. A poll every five seconds must not throw away four seconds
+	// of samples.
+	prior := make(map[string]Server, len(s.Servers))
 	busy := make(map[string]Op, len(s.Servers))
 	stopped := make(map[string]bool, len(s.Servers))
 	grace := make(map[string]time.Duration, len(s.Servers))
 	for _, srv := range s.Servers {
+		prior[srv.Name] = srv
 		if srv.Busy != OpNone {
 			busy[srv.Name] = srv.Busy
 		}
@@ -59,7 +64,11 @@ func (m FleetObserved) apply(s Snapshot) Snapshot {
 		}
 
 		state, detail := classify(c, requested, grace[c.Instance])
+		was := prior[c.Instance]
 		servers = append(servers, Server{
+			CPU:           was.CPU,
+			Mem:           was.Mem,
+			MemLimit:      was.MemLimit,
 			Name:          c.Instance,
 			Game:          c.Game,
 			ID:            c.ID,
@@ -156,6 +165,33 @@ func (m FleetUnobservable) apply(s Snapshot) Snapshot {
 		s = s.withNotice(Notice{At: m.At, Level: LevelError, Text: "docker unreachable: " + s.Engine.Err})
 	}
 	return s
+}
+
+// StatsSampled is one point from a container's stats stream.
+//
+// It carries the sample rather than the whole history because the history
+// lives in the snapshot: appending is the reducer's job, and doing it here
+// means only the one series being written is copied rather than the fleet.
+type StatsSampled struct {
+	At     time.Time
+	Server string
+	Sample host.Sample
+}
+
+func (m StatsSampled) apply(s Snapshot) Snapshot {
+	sampledAt := m.Sample.At
+	if sampledAt.IsZero() {
+		sampledAt = m.At
+	}
+
+	s.At = m.At
+	return s.withServers(mapServer(s.Servers, m.Server, func(srv *Server) {
+		// The cold points are discarded for now. They are 30 days of
+		// history bound for SQLite, which arrives with M2's persistence.
+		srv.CPU, _, _ = srv.CPU.Add(sampledAt, m.Sample.CPUPct)
+		srv.Mem, _, _ = srv.Mem.Add(sampledAt, float64(m.Sample.MemBytes))
+		srv.MemLimit = m.Sample.MemLimit
+	}))
 }
 
 // OperationBegan marks a server busy. The fleet view redraws on the keystroke

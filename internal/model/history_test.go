@@ -1,13 +1,13 @@
-package metrics
+package model
 
 import (
 	"testing"
 	"time"
 )
 
-var base = time.Date(2026, 9, 9, 21, 0, 0, 0, time.UTC)
+var histBase = time.Date(2026, 9, 9, 21, 0, 0, 0, time.UTC)
 
-func at(sec int) time.Time { return base.Add(time.Duration(sec) * time.Second) }
+func at(sec int) time.Time { return histBase.Add(time.Duration(sec) * time.Second) }
 
 func means(pts []Point) []float64 {
 	out := make([]float64, len(pts))
@@ -31,7 +31,7 @@ func equal(a, b []float64) bool {
 
 // addAll returns the history plus every cold point that completed along the
 // way, which is what a caller persisting the cold tier would collect.
-func addAll(t Tiered, from, count int, v func(i int) float64) (Tiered, []Point) {
+func addAll(t History, from, count int, v func(i int) float64) (History, []Point) {
 	var cold []Point
 	for i := from; i < from+count; i++ {
 		next, c, ok := t.Add(at(i), v(i))
@@ -46,7 +46,7 @@ func addAll(t Tiered, from, count int, v func(i int) float64) (Tiered, []Point) 
 func constant(x float64) func(int) float64 { return func(int) float64 { return x } }
 
 func TestZeroValueIsUsable(t *testing.T) {
-	var h Tiered
+	var h History
 	h, _, _ = h.Add(at(0), 42)
 
 	if got, ok := h.Last(); !ok || got.Mean != 42 {
@@ -55,7 +55,7 @@ func TestZeroValueIsUsable(t *testing.T) {
 }
 
 func TestHotKeepsEverySample(t *testing.T) {
-	h, _ := addAll(Tiered{}, 0, 5, func(i int) float64 { return float64(i) })
+	h, _ := addAll(History{}, 0, 5, func(i int) float64 { return float64(i) })
 
 	if got := means(h.Hot); !equal(got, []float64{0, 1, 2, 3, 4}) {
 		t.Errorf("Hot = %v, want every sample oldest first", got)
@@ -65,7 +65,7 @@ func TestHotKeepsEverySample(t *testing.T) {
 // This is the property everything else rests on: a history already handed to a
 // renderer must never change underneath it.
 func TestAddDoesNotTouchTheOldHistory(t *testing.T) {
-	before, _ := addAll(Tiered{}, 0, 3, func(i int) float64 { return float64(i) })
+	before, _ := addAll(History{}, 0, 3, func(i int) float64 { return float64(i) })
 	snapshot := before.Hot
 
 	after, _, _ := before.Add(at(3), 99)
@@ -83,7 +83,7 @@ func TestAddDoesNotTouchTheOldHistory(t *testing.T) {
 
 // Once full, appending must not alias the slice a snapshot is still holding.
 func TestAddDoesNotAliasOnceFull(t *testing.T) {
-	full, _ := addAll(Tiered{}, 0, HotCap, func(i int) float64 { return float64(i) })
+	full, _ := addAll(History{}, 0, HotCap, func(i int) float64 { return float64(i) })
 	held := full.Hot
 
 	_, _, _ = full.Add(at(HotCap), -1)
@@ -97,7 +97,7 @@ func TestAddDoesNotAliasOnceFull(t *testing.T) {
 }
 
 func TestWarmAggregatesTenHotSamples(t *testing.T) {
-	h, _ := addAll(Tiered{}, 0, HotPerWarm-1, constant(1))
+	h, _ := addAll(History{}, 0, HotPerWarm-1, constant(1))
 	if len(h.Warm) != 0 {
 		t.Errorf("Warm has %d points before the window closed, want 0", len(h.Warm))
 	}
@@ -110,7 +110,7 @@ func TestWarmAggregatesTenHotSamples(t *testing.T) {
 
 // The reason min and max are carried at all.
 func TestWarmPointKeepsTheExtremes(t *testing.T) {
-	h, _ := addAll(Tiered{}, 0, HotPerWarm, func(i int) float64 {
+	h, _ := addAll(History{}, 0, HotPerWarm, func(i int) float64 {
 		if i == 4 {
 			return 100 // one second pinned
 		}
@@ -138,7 +138,7 @@ func TestWarmPointKeepsTheExtremes(t *testing.T) {
 func TestColdCompletesEverySixWarmPoints(t *testing.T) {
 	perCold := HotPerWarm * WarmPerCold
 
-	h, cold := addAll(Tiered{}, 0, perCold-1, constant(5))
+	h, cold := addAll(History{}, 0, perCold-1, constant(5))
 	if len(cold) != 0 {
 		t.Fatalf("got %d cold points early", len(cold))
 	}
@@ -154,7 +154,7 @@ func TestColdCompletesEverySixWarmPoints(t *testing.T) {
 
 // An extreme must survive being averaged twice.
 func TestExtremesSurviveTwoDownsamples(t *testing.T) {
-	_, cold := addAll(Tiered{}, 0, HotPerWarm*WarmPerCold, func(i int) float64 {
+	_, cold := addAll(History{}, 0, HotPerWarm*WarmPerCold, func(i int) float64 {
 		if i == 33 {
 			return 500
 		}
@@ -174,7 +174,7 @@ func TestExtremesSurviveTwoDownsamples(t *testing.T) {
 
 // The leak with a long fuse this package exists to avoid.
 func TestStaysBoundedOverHours(t *testing.T) {
-	h, _ := addAll(Tiered{}, 0, 6*60*60, func(i int) float64 { return float64(i % 17) })
+	h, _ := addAll(History{}, 0, 6*60*60, func(i int) float64 { return float64(i % 17) })
 
 	if len(h.Hot) != HotCap {
 		t.Errorf("hot holds %d points, want the cap %d", len(h.Hot), HotCap)
@@ -185,7 +185,7 @@ func TestStaysBoundedOverHours(t *testing.T) {
 }
 
 func TestHotDropsTheOldestOnceFull(t *testing.T) {
-	h, _ := addAll(Tiered{}, 0, HotCap+3, func(i int) float64 { return float64(i) })
+	h, _ := addAll(History{}, 0, HotCap+3, func(i int) float64 { return float64(i) })
 
 	if got := h.Hot[0].Mean; got != 3 {
 		t.Errorf("oldest hot point = %v, want 3", got)
@@ -196,7 +196,7 @@ func TestHotDropsTheOldestOnceFull(t *testing.T) {
 }
 
 func TestTails(t *testing.T) {
-	h, _ := addAll(Tiered{}, 0, 5, func(i int) float64 { return float64(i) })
+	h, _ := addAll(History{}, 0, 5, func(i int) float64 { return float64(i) })
 
 	if got := means(h.HotTail(2)); !equal(got, []float64{3, 4}) {
 		t.Errorf("HotTail(2) = %v, want [3 4]", got)
@@ -207,13 +207,13 @@ func TestTails(t *testing.T) {
 	if got := h.HotTail(0); got != nil {
 		t.Errorf("HotTail(0) = %v, want nil", got)
 	}
-	if got := (Tiered{}).HotTail(5); got != nil {
+	if got := (History{}).HotTail(5); got != nil {
 		t.Errorf("HotTail on an empty history = %v, want nil", got)
 	}
 }
 
 func TestLastIsARawSampleNotAnAggregate(t *testing.T) {
-	h, _ := addAll(Tiered{}, 0, 25, func(i int) float64 { return float64(i) })
+	h, _ := addAll(History{}, 0, 25, func(i int) float64 { return float64(i) })
 
 	last, ok := h.Last()
 	if !ok || last.Mean != 24 {

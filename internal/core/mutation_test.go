@@ -388,3 +388,75 @@ func TestFailedStopDoesNotCountAsRequested(t *testing.T) {
 		t.Errorf("state = %v, want crashed after a failed stop", got)
 	}
 }
+
+// Samples accumulate into the history the dashboard draws.
+func TestStatsSampledBuildsHistory(t *testing.T) {
+	s := apply(Snapshot{}, observed(host.Container{Instance: "a", State: model.StateRunning}))
+
+	for i := 0; i < 5; i++ {
+		s = apply(s, StatsSampled{
+			At:     at.Add(time.Duration(i) * time.Second),
+			Server: "a",
+			Sample: host.Sample{CPUPct: float64(i * 10), MemBytes: int64(i) << 20, MemLimit: 4 << 30},
+		})
+	}
+
+	srv, _ := s.Server("a")
+	if got := len(srv.CPU.Hot); got != 5 {
+		t.Fatalf("CPU history has %d points, want 5", got)
+	}
+	if last, _ := srv.CPU.Last(); last.Mean != 40 {
+		t.Errorf("newest CPU = %v, want 40", last.Mean)
+	}
+	if srv.MemLimit != 4<<30 {
+		t.Errorf("MemLimit = %d, want it carried from the sample", srv.MemLimit)
+	}
+}
+
+// A poll lands every five seconds and rebuilds the server list from the
+// engine. It must not take four seconds of samples with it.
+func TestPollDoesNotDiscardHistory(t *testing.T) {
+	s := apply(Snapshot{}, observed(host.Container{Instance: "a", State: model.StateRunning}))
+	for i := 0; i < 5; i++ {
+		s = apply(s, StatsSampled{At: at, Server: "a", Sample: host.Sample{CPUPct: 1}})
+	}
+
+	s = apply(s, observed(host.Container{Instance: "a", State: model.StateRunning}))
+
+	srv, _ := s.Server("a")
+	if got := len(srv.CPU.Hot); got != 5 {
+		t.Errorf("the poll left %d history points, want 5 kept", got)
+	}
+}
+
+// The same immutability the History type guarantees has to survive the
+// reducer: an earlier snapshot the TUI is still rendering must not change.
+func TestStatsSampledDoesNotMutateEarlierSnapshots(t *testing.T) {
+	before := apply(Snapshot{},
+		observed(host.Container{Instance: "a", State: model.StateRunning}),
+		StatsSampled{At: at, Server: "a", Sample: host.Sample{CPUPct: 1}},
+	)
+	after := apply(before, StatsSampled{At: at, Server: "a", Sample: host.Sample{CPUPct: 2}})
+
+	if got := len(before.Servers[0].CPU.Hot); got != 1 {
+		t.Errorf("the earlier snapshot now has %d points, want 1", got)
+	}
+	if got := len(after.Servers[0].CPU.Hot); got != 2 {
+		t.Errorf("the newer snapshot has %d points, want 2", got)
+	}
+}
+
+// A sample carrying its own timestamp is stamped with it, not with when the
+// store happened to apply it.
+func TestSampleKeepsItsOwnTimestamp(t *testing.T) {
+	sampled := at.Add(-3 * time.Second)
+	s := apply(Snapshot{},
+		observed(host.Container{Instance: "a", State: model.StateRunning}),
+		StatsSampled{At: at, Server: "a", Sample: host.Sample{At: sampled, CPUPct: 7}},
+	)
+
+	last, _ := s.Servers[0].CPU.Last()
+	if !last.At.Equal(sampled) {
+		t.Errorf("point stamped %v, want the sample's own %v", last.At, sampled)
+	}
+}
