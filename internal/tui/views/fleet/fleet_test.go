@@ -96,17 +96,18 @@ func TestGoldenRenders(t *testing.T) {
 		snap   core.Snapshot
 		setup  func(tui.View, core.Snapshot) tui.View
 	}{
-		{name: "wide", width: 120, height: 34, snap: snapshot()},
+		{name: "wide", width: 92, height: 34, snap: snapshot()},
 		{name: "narrow", width: 80, height: 24, snap: snapshot()},
+		{name: "no-rail-wide", width: 120, height: 34, snap: snapshot()},
 		{
-			name: "engine-unreachable", width: 120, height: 34,
+			name: "engine-unreachable", width: 92, height: 34,
 			snap: snapshot(core.FleetUnobservable{
 				At:  now,
 				Err: errors.New("cannot connect to the Docker daemon"),
 			}),
 		},
 		{
-			name: "empty", width: 120, height: 34,
+			name: "empty", width: 92, height: 34,
 			snap: func() core.Snapshot {
 				return core.Reduce(
 					core.Snapshot{Engine: core.Engine{Transport: "npipe", OK: true}},
@@ -115,12 +116,12 @@ func TestGoldenRenders(t *testing.T) {
 			}(),
 		},
 		{
-			name: "operation-in-flight", width: 120, height: 34,
+			name: "operation-in-flight", width: 92, height: 34,
 			snap: snapshot(core.OperationBegan{At: now, Server: "palworld-sat", Op: core.OpStart}),
 		},
 		{
 			// A stop is a wait, not an instant, so the row says how long.
-			name: "stopping-with-grace", width: 120, height: 34,
+			name: "stopping-with-grace", width: 92, height: 34,
 			snap: snapshot(core.OperationBegan{
 				At: now, Server: "zomboid-main", Op: core.OpStop, Grace: 60 * time.Second,
 			}),
@@ -129,7 +130,7 @@ func TestGoldenRenders(t *testing.T) {
 			// A stop Garrison asked for that had to be forced: the glyph
 			// stays grey because the state is honest, the reason stays red
 			// because a server killed mid-write is a save you may not have.
-			name: "stopped-after-a-kill", width: 120, height: 34,
+			name: "stopped-after-a-kill", width: 92, height: 34,
 			snap: snapshot(
 				core.OperationBegan{At: now, Server: "zomboid-main", Op: core.OpStop, Grace: 60 * time.Second},
 				core.OperationEnded{At: now, Server: "zomboid-main", Op: core.OpStop},
@@ -142,7 +143,7 @@ func TestGoldenRenders(t *testing.T) {
 			),
 		},
 		{
-			name: "failed-operation", width: 120, height: 34,
+			name: "failed-operation", width: 92, height: 34,
 			snap: snapshot(core.OperationEnded{
 				At:     now,
 				Server: "zomboid-testing",
@@ -151,7 +152,7 @@ func TestGoldenRenders(t *testing.T) {
 			}),
 		},
 		{
-			name: "confirming-stop", width: 120, height: 34,
+			name: "confirming-stop", width: 92, height: 34,
 			snap: snapshot(),
 			setup: func(v tui.View, snap core.Snapshot) tui.View {
 				next, _ := v.Update(keyPress("S"), frameFor(snap), snap)

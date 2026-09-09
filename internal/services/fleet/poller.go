@@ -32,6 +32,11 @@ const DefaultInterval = 5 * time.Second
 type Observer interface {
 	FleetObserved(ctx context.Context, at time.Time, containers []host.Container)
 	FleetUnobservable(ctx context.Context, at time.Time, err error)
+
+	// HostDescribed carries the engine's own figures — version, cores,
+	// total memory. They are what turn a container's usage into a
+	// proportion, and none of them change while Garrison is running.
+	HostDescribed(ctx context.Context, at time.Time, info host.Info)
 }
 
 // Poller re-lists the fleet on an interval.
@@ -56,16 +61,38 @@ func (p *Poller) Run(ctx context.Context, obs Observer) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	p.describeHost(ctx, obs)
 	p.poll(ctx, obs) // immediately, so the first frame is not empty for five seconds
+
+	// The host's shape does not change, but the engine restarts, so it is
+	// re-read occasionally rather than exactly once. Rarely enough that it
+	// costs nothing; often enough that a Docker Desktop upgrade is noticed.
+	described := time.NewTicker(hostInterval)
+	defer described.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-described.C:
+			p.describeHost(ctx, obs)
 		case <-ticker.C:
 			p.poll(ctx, obs)
 		}
 	}
+}
+
+// hostInterval is how often the engine's own figures are re-read.
+const hostInterval = 5 * time.Minute
+
+func (p *Poller) describeHost(ctx context.Context, obs Observer) {
+	info, err := p.Driver.Info(ctx)
+	if err != nil || ctx.Err() != nil {
+		// Not worth reporting: the fleet poll is about to fail too and will
+		// say so once, rather than twice for the same outage.
+		return
+	}
+	obs.HostDescribed(ctx, p.now(), info)
 }
 
 // poll asks the driver for the fleet and reports whatever came back.

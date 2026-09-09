@@ -95,20 +95,20 @@ func TestGoldenRenders(t *testing.T) {
 		height int
 		snap   core.Snapshot
 	}{
-		{name: "wide", width: 120, height: 34, snap: populated()},
+		{name: "wide", width: 92, height: 34, snap: populated()},
 		{name: "narrow", width: 80, height: 24, snap: populated()},
 		// Under 30 rows the tile strip becomes one line of inline values —
 		// a real narrow layout, not a clipped wide one.
-		{name: "short", width: 120, height: 10, snap: populated()},
+		{name: "short", width: 92, height: 14, snap: populated()},
 		{
-			name: "no-history-yet", width: 120, height: 34,
+			name: "no-history-yet", width: 92, height: 34,
 			snap: core.Reduce(core.Snapshot{Engine: core.Engine{OK: true}},
 				core.FleetObserved{At: now, Containers: []host.Container{
 					{Instance: "valheim-huldra", Game: "valheim", State: model.StateRunning},
 				}}),
 		},
 		{
-			name: "empty-fleet", width: 120, height: 34,
+			name: "empty-fleet", width: 92, height: 34,
 			snap: core.Snapshot{Engine: core.Engine{OK: true}},
 		},
 	}

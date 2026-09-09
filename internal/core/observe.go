@@ -31,6 +31,11 @@ func (s *Store) LogEventsRead(ctx context.Context, instance string, events []mod
 	s.Send(ctx, LogEventsRead{At: s.now(), Server: instance, Events: events})
 }
 
+// HostDescribed records the engine's own figures.
+func (s *Store) HostDescribed(ctx context.Context, at time.Time, info host.Info) {
+	s.Send(ctx, HostDescribed{At: at, Info: info})
+}
+
 // StatsSampled records one point from a container's stats stream.
 func (s *Store) StatsSampled(ctx context.Context, instance string, sample host.Sample) {
 	s.Send(ctx, StatsSampled{At: s.now(), Server: instance, Sample: sample})

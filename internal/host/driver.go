@@ -45,6 +45,23 @@ type Driver interface {
 	// Ping reports whether the engine is reachable. A failure is surfaced as
 	// StateUnknown across the fleet rather than rendered as "stopped".
 	Ping(ctx context.Context) error
+
+	// Info describes the machine the containers are running on. It changes
+	// about never, so callers poll it rarely.
+	Info(ctx context.Context) (Info, error)
+}
+
+// Info is what the engine says about its host.
+//
+// The capacity figures are what turn a container's usage into a proportion:
+// 27 GiB means nothing until you know the machine has 64, and a server at 200%
+// CPU is either fine or catastrophic depending on how many cores there are.
+type Info struct {
+	Version    string // engine version, for the host panel
+	OS         string // "Docker Desktop", "Ubuntu 22.04.5 LTS"
+	NCPU       int
+	MemTotal   int64
+	Containers int
 }
 
 // Labels Garrison stamps on every container it creates. PlanHash lets startup

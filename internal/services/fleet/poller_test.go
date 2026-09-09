@@ -18,10 +18,11 @@ var at = time.Date(2026, 9, 9, 21, 7, 0, 0, time.UTC)
 // same reason the fake driver has one: the poller calls from its own
 // goroutine while the test asserts from another.
 type recorder struct {
-	mu       sync.Mutex
-	observed [][]host.Container
-	failures []error
-	changed  chan struct{}
+	mu        sync.Mutex
+	observed  [][]host.Container
+	failures  []error
+	described []host.Info
+	changed   chan struct{}
 }
 
 func newRecorder() *recorder {
@@ -40,6 +41,19 @@ func (r *recorder) FleetUnobservable(ctx context.Context, ts time.Time, err erro
 	r.failures = append(r.failures, err)
 	r.mu.Unlock()
 	r.ping()
+}
+
+func (r *recorder) HostDescribed(ctx context.Context, ts time.Time, info host.Info) {
+	r.mu.Lock()
+	r.described = append(r.described, info)
+	r.mu.Unlock()
+	r.ping()
+}
+
+func (r *recorder) hostCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.described)
 }
 
 func (r *recorder) ping() {
@@ -162,4 +176,37 @@ func TestPollerDefaultsItsInterval(t *testing.T) {
 	run(t, &fleet.Poller{Driver: d}, rec)
 
 	rec.waitFor(t, "the first poll", func(observed, _ int) bool { return observed >= 1 })
+}
+
+// The host's figures are what turn usage into a proportion, so they are read
+// once at startup rather than waited for.
+func TestPollerDescribesTheHostImmediately(t *testing.T) {
+	d := fake.New()
+	d.SetInfo(host.Info{Version: "29.7.2", NCPU: 16, MemTotal: 64 << 30})
+	rec := newRecorder()
+
+	run(t, &fleet.Poller{Driver: d, Interval: time.Hour}, rec)
+
+	rec.waitFor(t, "the host description", func(_, _ int) bool { return rec.hostCount() >= 1 })
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if got := rec.described[0].NCPU; got != 16 {
+		t.Errorf("NCPU = %d, want 16", got)
+	}
+}
+
+// An unreachable engine fails the fleet poll, which already says so once. A
+// second failure report for the same outage is noise.
+func TestPollerStaysQuietAboutHostWhenTheEngineIsDown(t *testing.T) {
+	d := fake.New()
+	d.SetDown(true)
+	rec := newRecorder()
+
+	run(t, &fleet.Poller{Driver: d, Interval: 5 * time.Millisecond}, rec)
+	rec.waitFor(t, "a fleet failure", func(_, failed int) bool { return failed >= 1 })
+
+	if got := rec.hostCount(); got != 0 {
+		t.Errorf("described the host %d times while the engine was down, want 0", got)
+	}
 }

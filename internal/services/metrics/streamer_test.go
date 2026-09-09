@@ -161,16 +161,23 @@ func TestNoGoroutinesLeakAcrossChurn(t *testing.T) {
 	settle(t, func() bool { return true })
 	before := runtime.NumGoroutine()
 
+	// Reconcile conflates: a fleet queued behind another is replaced rather
+	// than queued, so a test may not assume every call is processed. What
+	// matters is that streams do open, do close, and leave nothing behind.
+	var up []host.Container
+	for i := 0; i < 4; i++ {
+		c := running(string(rune('a' + i)))
+		d.Put(c)
+		up = append(up, c)
+	}
+
 	for cycle := 0; cycle < 10; cycle++ {
-		var up []host.Container
-		for i := 0; i < 4; i++ {
-			c := running(string(rune('a' + i)))
-			d.Put(c)
-			up = append(up, c)
-		}
+		opened := d.CallCount("Stats")
 		s.Reconcile(up)
-		rec.waitFor(t, "streams open", func() bool { return d.CallCount("Stats") >= (cycle+1)*4 })
+		rec.waitFor(t, "streams to open", func() bool { return d.CallCount("Stats") > opened })
+
 		s.Reconcile(nil)
+		settle(t, func() bool { return true })
 	}
 
 	cancel()

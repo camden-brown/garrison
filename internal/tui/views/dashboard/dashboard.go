@@ -1,5 +1,5 @@
-// Package dashboard is the per-server screen: four tiles, and the numbers
-// behind them.
+// Package dashboard is the per-server screen: four tiles, and the log behind
+// them.
 //
 // The fourth tile is game-supplied. A plugin's Parse emits a named metric and
 // the tile renders whatever comes out, so Zomboid can show zombies alive and
@@ -9,6 +9,7 @@ package dashboard
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -62,13 +63,7 @@ func step(snap core.Snapshot, from string, delta int) string {
 	if len(snap.Servers) == 0 {
 		return ""
 	}
-	i := 0
-	for n, srv := range snap.Servers {
-		if srv.Name == from {
-			i = n
-			break
-		}
-	}
+	i := indexOf(snap, from)
 	i += delta
 	if i < 0 {
 		i = 0
@@ -77,6 +72,15 @@ func step(snap core.Snapshot, from string, delta int) string {
 		i = len(snap.Servers) - 1
 	}
 	return snap.Servers[i].Name
+}
+
+func indexOf(snap core.Snapshot, name string) int {
+	for i, srv := range snap.Servers {
+		if srv.Name == name {
+			return i
+		}
+	}
+	return 0
 }
 
 func (v *View) Render(f tui.Frame, snap core.Snapshot) string {
@@ -99,14 +103,107 @@ func (v *View) Render(f tui.Frame, snap core.Snapshot) string {
 		b.WriteString("  ")
 		b.WriteString(t.Dim.Render(fmt.Sprintf("%d/%d · ←→ to move", indexOf(snap, srv.Name)+1, n)))
 	}
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 
-	b.WriteString(tiles(f, srv))
+	// Under about 20 rows the tile strip collapses to one line of values.
+	// A real narrow layout, not a clipped wide one.
+	if f.Height >= 20 {
+		b.WriteString(comp.TileStrip(t, f.Width, tiles(srv)))
+	} else {
+		b.WriteString(comp.InlineTiles(t, f.Width, tiles(srv)))
+	}
+	b.WriteString("\n")
 
 	if tail := logTail(f, srv); tail != "" {
 		b.WriteString(tail)
 	}
 	return b.String()
+}
+
+func tiles(srv core.Server) []comp.Tile {
+	return []comp.Tile{cpuTile(srv), memTile(srv), playersTile(srv), gameTile(srv)}
+}
+
+func cpuTile(srv core.Server) comp.Tile {
+	value := "—"
+	if last, ok := srv.CPU.Last(); ok {
+		value = fmt.Sprintf("%.1f%%", last.Mean)
+	}
+	// CPU has a natural scale, so it gets one rather than being drawn
+	// against whatever its own maximum happened to be — otherwise a single
+	// spike flattens an hour of ordinary variation into a bottom line, and
+	// the same shape means something different on every server.
+	//
+	// A container may exceed 100% across several cores. Those clamp to full
+	// height, which is the right signal: sustained triple-digit CPU on a
+	// game server is a thing to look at, not a thing to scale away.
+	return comp.Tile{Label: "CPU", Value: value, Points: srv.CPU.Hot, Min: 0, Max: 100}
+}
+
+func memTile(srv core.Server) comp.Tile {
+	value, right := "—", ""
+	if last, ok := srv.Mem.Last(); ok {
+		value = comp.Bytes(int64(last.Mean))
+	}
+	if srv.MemLimit > 0 {
+		right = comp.Bytes(srv.MemLimit)
+	}
+	return comp.Tile{
+		Label:  "MEM",
+		Right:  right,
+		Value:  value,
+		Points: srv.Mem.Hot,
+		Max:    float64(srv.MemLimit),
+	}
+}
+
+// playersTile counts the roster reconstructed from log events.
+//
+// A stopped server shows a dash rather than zero: "nobody is playing" and
+// "there is nothing running to play on" are different facts, and a dashboard
+// that renders them identically is one you stop trusting.
+func playersTile(srv core.Server) comp.Tile {
+	if !srv.State.Live() {
+		return comp.Tile{Label: "PLAYERS", Value: "—"}
+	}
+
+	note := ""
+	if len(srv.Players) > 0 {
+		note = strings.Join(playerNames(srv.Players), ", ")
+	}
+	return comp.Tile{Label: "PLAYERS", Value: strconv.Itoa(len(srv.Players)), Note: note}
+}
+
+func playerNames(players []model.Player) []string {
+	out := make([]string, 0, len(players))
+	for _, p := range players {
+		out = append(out, p.Name)
+	}
+	return out
+}
+
+// gameTile is whatever the plugin's Parse emits. There is no game-specific
+// code here — the label and the value both come from the snapshot.
+func gameTile(srv core.Server) comp.Tile {
+	// A game that supplies no metric gets network throughput instead, which
+	// is the documented fallback and is always available.
+	if srv.MetricLabel == "" {
+		value := "—"
+		if last, ok := srv.Net.Last(); ok {
+			value = comp.Bytes(int64(last.Mean)) + "/s"
+		}
+		return comp.Tile{Label: "NET I/O", Value: value, Points: srv.Net.Hot}
+	}
+
+	value := "—"
+	if last, ok := srv.GameMetric.Last(); ok {
+		value = fmt.Sprintf("%.0f", last.Mean)
+	}
+	return comp.Tile{
+		Label:  strings.ToUpper(srv.MetricLabel),
+		Value:  value,
+		Points: srv.GameMetric.Hot,
+	}
 }
 
 // logTail is the last few classified lines, newest at the bottom.
@@ -115,7 +212,7 @@ func (v *View) Render(f tui.Frame, snap core.Snapshot) string {
 // mod otherwise erases the last hour of history in seconds — the tail would
 // show nothing but the same line, and the thing that caused it would be gone.
 func logTail(f tui.Frame, srv core.Server) string {
-	rows := f.Height - 12
+	rows := f.Height - 10
 	if rows < 3 || len(srv.Console) == 0 {
 		return ""
 	}
@@ -127,17 +224,22 @@ func logTail(f tui.Frame, srv core.Server) string {
 
 	t := f.Theme
 	var b strings.Builder
-	b.WriteString(t.Header.Render("CONSOLE"))
-	b.WriteString("\n")
 	for _, line := range collapsed {
 		text := line.text
 		if line.count > 1 {
 			text += fmt.Sprintf("  %d×", line.count)
 		}
-		b.WriteString(t.Dim.Render(comp.Truncate(text, f.Width)))
+		b.WriteString(t.Dim.Render(comp.Truncate(text, f.Width-2)))
 		b.WriteString("\n")
 	}
-	return b.String()
+
+	return comp.Panel{
+		Theme:   t,
+		Title:   "CONSOLE",
+		Right:   srv.Name,
+		Width:   f.Width,
+		Focused: f.Focused,
+	}.Render(strings.TrimRight(b.String(), "\n"))
 }
 
 type collapsedLine struct {
@@ -164,202 +266,4 @@ func collapse(events []model.Event) []collapsedLine {
 		out = append(out, collapsedLine{text: text, count: 1})
 	}
 	return out
-}
-
-func itoa(n int) string { return fmt.Sprintf("%d", n) }
-
-func indexOf(snap core.Snapshot, name string) int {
-	for i, srv := range snap.Servers {
-		if srv.Name == name {
-			return i
-		}
-	}
-	return 0
-}
-
-// tileWidth is fixed rather than proportional so the tiles line up with each
-// other and with the fleet table at any terminal width.
-//
-// Sized so four fit beside the rail at 120 columns, which is the layout the
-// design is drawn at: 4×21 plus three two-column gaps is 90, inside the 92 the
-// stage gets once the rail has taken its 26.
-const tileWidth = 21
-
-// tiles draws the strip. Under 30 rows the design collapses it to one line of
-// inline values; that is the narrow layout, not a clipped wide one.
-func tiles(f tui.Frame, srv core.Server) string {
-	specs := []tileSpec{
-		cpuTile(srv),
-		memTile(srv),
-		playersTile(srv),
-		gameTile(srv),
-	}
-
-	perRow := f.Width / (tileWidth + 2)
-	if perRow < 1 {
-		perRow = 1
-	}
-	if f.Height < 12 {
-		return inline(f, specs)
-	}
-
-	var b strings.Builder
-	for start := 0; start < len(specs); start += perRow {
-		end := start + perRow
-		if end > len(specs) {
-			end = len(specs)
-		}
-		b.WriteString(row(f, specs[start:end]))
-	}
-	return b.String()
-}
-
-type tileSpec struct {
-	label  string
-	value  string
-	note   string
-	points []model.Point
-
-	// min and max pin the sparkline's scale. Left zero, it scales to the
-	// data and shows shape instead of magnitude — right for a series with
-	// no natural ceiling, wrong for one that has a real one.
-	min, max float64
-}
-
-func cpuTile(srv core.Server) tileSpec {
-	value := "—"
-	if last, ok := srv.CPU.Last(); ok {
-		value = fmt.Sprintf("%.1f%%", last.Mean)
-	}
-	// CPU has a natural scale, so it gets one rather than being drawn
-	// against whatever its own maximum happened to be — otherwise a single
-	// spike flattens an hour of ordinary variation into a bottom line, and
-	// the same shape means something different on every server.
-	//
-	// A container may exceed 100% across several cores. Those clamp to full
-	// height, which is the right signal: sustained triple-digit CPU on a
-	// game server is a thing to look at, not a thing to scale away.
-	return tileSpec{label: "CPU", value: value, points: srv.CPU.Hot, min: 0, max: 100}
-}
-
-func memTile(srv core.Server) tileSpec {
-	value, note := "—", ""
-	if last, ok := srv.Mem.Last(); ok {
-		value = bytesLabel(int64(last.Mean))
-	}
-	if srv.MemLimit > 0 {
-		note = "of " + bytesLabel(srv.MemLimit)
-	}
-	return tileSpec{
-		label:  "MEM",
-		value:  value,
-		note:   note,
-		points: srv.Mem.Hot,
-		max:    float64(srv.MemLimit),
-	}
-}
-
-// playersTile counts the roster reconstructed from log events.
-//
-// A stopped server shows a dash rather than zero: "nobody is playing" and
-// "there is nothing running to play on" are different facts, and a dashboard
-// that renders them identically is one you stop trusting.
-func playersTile(srv core.Server) tileSpec {
-	if !srv.State.Live() {
-		return tileSpec{label: "PLAYERS", value: "—"}
-	}
-
-	note := ""
-	if len(srv.Players) > 0 {
-		note = strings.Join(playerNames(srv.Players), ", ")
-	}
-	return tileSpec{label: "PLAYERS", value: itoa(len(srv.Players)), note: note}
-}
-
-func playerNames(players []model.Player) []string {
-	out := make([]string, 0, len(players))
-	for _, p := range players {
-		out = append(out, p.Name)
-	}
-	return out
-}
-
-// gameTile is whatever the plugin's Parse emits. There is no game-specific
-// code here — the label and the value both come from the snapshot.
-func gameTile(srv core.Server) tileSpec {
-	// A game that supplies no metric gets network throughput instead, which
-	// is the documented fallback and is always available.
-	if srv.MetricLabel == "" {
-		value := "—"
-		if last, ok := srv.Net.Last(); ok {
-			value = bytesLabel(int64(last.Mean)) + "/s"
-		}
-		return tileSpec{label: "NET I/O", value: value, points: srv.Net.Hot}
-	}
-	value := "—"
-	if last, ok := srv.GameMetric.Last(); ok {
-		value = fmt.Sprintf("%.0f", last.Mean)
-	}
-	return tileSpec{
-		label:  strings.ToUpper(srv.MetricLabel),
-		value:  value,
-		points: srv.GameMetric.Hot,
-	}
-}
-
-func row(f tui.Frame, specs []tileSpec) string {
-	lines := make([][]string, len(specs))
-	for i, s := range specs {
-		lines[i] = tile(f, s)
-	}
-
-	var b strings.Builder
-	for line := 0; line < 4; line++ {
-		cells := make([]string, len(specs))
-		for i := range specs {
-			cells[i] = lines[i][line]
-		}
-		b.WriteString(strings.TrimRight(strings.Join(cells, "  "), " "))
-		b.WriteString("\n")
-	}
-	b.WriteString("\n")
-	return b.String()
-}
-
-// tile is four lines: a heading, the number, a sparkline, and a note.
-func tile(f tui.Frame, s tileSpec) []string {
-	t := f.Theme
-	inner := tileWidth - 2
-
-	spark := comp.Sparkline{Width: inner, ASCII: t.ASCII, Min: s.min, Max: s.max}.Render(s.points)
-
-	return []string{
-		t.Header.Render(comp.Pad(s.label, tileWidth)),
-		t.Title.Render(comp.Pad(s.value, tileWidth)),
-		t.Accent.Render(comp.Pad(spark, tileWidth)),
-		t.Dim.Render(comp.Pad(s.note, tileWidth)),
-	}
-}
-
-// inline is the under-30-rows layout: one line of values, no sparklines.
-func inline(f tui.Frame, specs []tileSpec) string {
-	parts := make([]string, 0, len(specs))
-	for _, s := range specs {
-		parts = append(parts, f.Theme.Header.Render(s.label)+" "+f.Theme.Title.Render(s.value))
-	}
-	return comp.Truncate(strings.Join(parts, "  ·  "), f.Width) + "\n"
-}
-
-// bytesLabel renders a byte count the way an operator reads one.
-func bytesLabel(n int64) string {
-	const unit = 1024
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
-	}
-	div, exp := int64(unit), 0
-	for v := n / unit; v >= unit && exp < 3; v /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGT"[exp])
 }

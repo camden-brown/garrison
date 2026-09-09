@@ -1,7 +1,16 @@
-SERVERS  u start · S stop · ↑↓ move · q quit
-
-  NAME             GAME       STATE        UPTIME     NOTE
-▌ palworld-sat     palworld   ✕ crashed    —          OOM killed
-  valheim-huldra   valheim    ● running    2d 11h
-  zomboid-main     zomboid    ● running    6d 04h
-  zomboid-testing  zomboid    ○ stopped    —          exit 0
+PLAYERS 0  ·  FLEET CPU 0%  ·  FLEET MEM 0 B  ·  ATTENTION 0
+╭ SERVERS ───────────────────────────────────────── u start · S stop · ↑↓ move ╮
+│  NAME             STATE       PLYR    CPU       MEM  UPTIME PORTS / TASK     │
+│▌ palworld-sat     ✕ crashed      —      —         —       — OOM killed       │
+│  valheim-huldra   ● running      0      —         —  2d 11h 2456/udp         │
+│  zomboid-main     ● running      0      —         —  6d 04h 16261/udp        │
+│  zomboid-testing  ○ stopped      —      —         —       — exit 0           │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭ ATTENTION ──────────────────── a ack ╮ ╭ ACTIVITY ────────────── all servers ╮
+│✕ palworld-sat — OOM killed           │ │Nothing yet.                         │
+│                                      │ │                                     │
+│──────────────────────────────────────│ │                                     │
+│HOST                                  │ │                                     │
+│npipe · healthy                       │ │                                     │
+│                                      │ │                                     │
+╰──────────────────────────────────────╯ ╰─────────────────────────────────────╯

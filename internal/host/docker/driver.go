@@ -72,6 +72,23 @@ func (d *Driver) Ping(ctx context.Context) error {
 	return nil
 }
 
+// Info describes the engine's host. Called rarely — none of it changes while
+// Garrison is running, except the container count, which the fleet poll
+// already knows more precisely.
+func (d *Driver) Info(ctx context.Context) (host.Info, error) {
+	info, err := d.cli.Info(ctx)
+	if err != nil {
+		return host.Info{}, fmt.Errorf("engine info: %w", err)
+	}
+	return host.Info{
+		Version:    info.ServerVersion,
+		OS:         info.OperatingSystem,
+		NCPU:       info.NCPU,
+		MemTotal:   info.MemTotal,
+		Containers: info.Containers,
+	}, nil
+}
+
 // List finds every container Garrison manages by label, then inspects each
 // one.
 //

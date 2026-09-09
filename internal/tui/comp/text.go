@@ -1,6 +1,7 @@
 package comp
 
 import (
+	"strconv"
 	"strings"
 	"time"
 
@@ -88,4 +89,19 @@ func pad2(n int) string {
 		return "0" + itoa(n)
 	}
 	return itoa(n)
+}
+
+// Bytes renders a byte count the way an operator reads one.
+func Bytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return strconv.FormatInt(n, 10) + " B"
+	}
+
+	div, exp := int64(unit), 0
+	for v := n / unit; v >= unit && exp < 3; v /= unit {
+		div *= unit
+		exp++
+	}
+	return strconv.FormatFloat(float64(n)/float64(div), 'f', 1, 64) + " " + string("KMGT"[exp]) + "iB"
 }

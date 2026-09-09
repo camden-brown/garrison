@@ -39,6 +39,14 @@ type Engine struct {
 	OK        bool
 	Err       string    // why not, when OK is false
 	LastOK    time.Time // when it last answered, so "down for 4m" is sayable
+
+	// The host's own figures, from the engine. Capacity is what turns usage
+	// into a proportion: 27 GiB means nothing until you know the machine
+	// has 64.
+	Version  string
+	OS       string
+	NCPU     int
+	MemTotal int64
 }
 
 // Server is one managed container as the UI needs it.

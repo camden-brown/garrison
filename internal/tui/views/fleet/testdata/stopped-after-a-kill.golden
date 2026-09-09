@@ -1,4 +1,30 @@
-SERVERS  u start · S stop · ↑↓ move · q quit
-
-  NAME                 GAME         STATE        UPTIME     PORTS                NOTE
-▌ zomboid-main         zomboid      ○ stopped    —          —                    killed after 60s grace
+╭ PLAYERS ───────────╮ ╭ FLEET CPU ─────────╮ ╭ FLEET MEM ─────────╮ ╭ ATTENTION ────── a ╮
+│0                   │ │0%                  │ │0 B                 │ │0                   │
+│                    │ │                    │ │                    │ │                    │
+│                    │ │                    │ │                    │ │all clear           │
+╰────────────────────╯ ╰────────────────────╯ ╰────────────────────╯ ╰────────────────────╯
+╭ SERVERS ───────────────────────────────────────────────────── u start · S stop · ↑↓ move ╮
+│  NAME             GAME      STATE       PLYR    CPU       MEM  UPTIME PORTS / TASK       │
+│▌ zomboid-main     zomboid   ○ stopped      —      —         —       — killed after 60s g…│
+╰──────────────────────────────────────────────────────────────────────────────────────────╯
+╭ ATTENTION ────────────────────────── a ack ╮ ╭ ACTIVITY ──────────────────── all servers ╮
+│Nothing needs attention.                    │ │Nothing yet.                               │
+│                                            │ │                                           │
+│                                            │ │                                           │
+│                                            │ │                                           │
+│                                            │ │                                           │
+│                                            │ │                                           │
+│                                            │ │                                           │
+│                                            │ │                                           │
+│                                            │ │                                           │
+│                                            │ │                                           │
+│                                            │ │                                           │
+│                                            │ │                                           │
+│                                            │ │                                           │
+│                                            │ │                                           │
+│                                            │ │                                           │
+│────────────────────────────────────────────│ │                                           │
+│HOST                                        │ │                                           │
+│npipe · healthy                             │ │                                           │
+│                                            │ │                                           │
+╰────────────────────────────────────────────╯ ╰───────────────────────────────────────────╯

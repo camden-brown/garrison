@@ -144,6 +144,10 @@ func (f fanOut) FleetObserved(ctx context.Context, at time.Time, containers []ho
 	f.logs.Reconcile(containers)
 }
 
+func (f fanOut) HostDescribed(ctx context.Context, at time.Time, info host.Info) {
+	f.store.HostDescribed(ctx, at, info)
+}
+
 func (f fanOut) FleetUnobservable(ctx context.Context, at time.Time, err error) {
 	f.store.FleetUnobservable(ctx, at, err)
 	// The engine is unreachable, so every stream is already failing. Telling

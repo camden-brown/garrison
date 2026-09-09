@@ -46,6 +46,7 @@ type Driver struct {
 	logText string
 	execOut map[string][]byte
 	clock   func() time.Time
+	info    host.Info
 }
 
 var _ host.Driver = (*Driver)(nil)
@@ -205,6 +206,27 @@ func (d *Driver) now() time.Time {
 
 func (d *Driver) Ping(ctx context.Context) error {
 	return d.record("Ping")
+}
+
+// SetInfo fixes what Info reports.
+func (d *Driver) SetInfo(info host.Info) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.info = info
+}
+
+func (d *Driver) Info(ctx context.Context) (host.Info, error) {
+	if err := d.record("Info"); err != nil {
+		return host.Info{}, err
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.info.NCPU == 0 {
+		// A plausible default, so a test that does not care still gets
+		// figures a view can divide by.
+		return host.Info{Version: "29.0.0", OS: "fake", NCPU: 8, MemTotal: 16 << 30}, nil
+	}
+	return d.info, nil
 }
 
 func (d *Driver) List(ctx context.Context) ([]host.Container, error) {

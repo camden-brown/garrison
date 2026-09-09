@@ -24,6 +24,10 @@ type Theme struct {
 	Selected lipgloss.Style
 	Bar      lipgloss.Style
 	Err      lipgloss.Style
+
+	// Chat is magenta and nothing else is, so a conversation separates from
+	// server output at a glance — DESIGN §4.
+	Chat lipgloss.Style
 }
 
 // Six hues, each with one job. Amber is the interface accent — focus and
@@ -49,6 +53,7 @@ func NewTheme(ascii bool) *Theme {
 		Selected: lipgloss.NewStyle().Foreground(colAmber).Bold(true),
 		Bar:      lipgloss.NewStyle().Foreground(colCyan),
 		Err:      lipgloss.NewStyle().Foreground(colRed),
+		Chat:     lipgloss.NewStyle().Foreground(colMagenta),
 	}
 }
 

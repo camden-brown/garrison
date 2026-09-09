@@ -403,6 +403,21 @@ func (m OperationEnded) apply(s Snapshot) Snapshot {
 	return s
 }
 
+// HostDescribed records the engine's own figures.
+type HostDescribed struct {
+	At   time.Time
+	Info host.Info
+}
+
+func (m HostDescribed) apply(s Snapshot) Snapshot {
+	s.At = m.At
+	s.Engine.Version = m.Info.Version
+	s.Engine.OS = m.Info.OS
+	s.Engine.NCPU = m.Info.NCPU
+	s.Engine.MemTotal = m.Info.MemTotal
+	return s
+}
+
 // EngineResolved records which endpoint Garrison is talking to. It is sent
 // once at startup so the status bar can show "unix · unreachable" instead of
 // nothing at all before the first poll returns.

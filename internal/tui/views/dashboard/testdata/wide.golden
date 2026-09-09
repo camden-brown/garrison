@@ -1,12 +1,12 @@
 valheim-huldra  ● running  1/2 · ←→ to move
-
-CPU                    MEM                    PLAYERS                WORLD SAVE
-11.0%                  3.9 GiB                1                      314
-▂▁▁▁▇▁▂▂▁▁▁▁▁▂▂▁▁▁▁    ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄                                             ▁
-                       of 8.0 GiB             Dalinar
-
-CONSOLE
-Dalinar joined
-world saved in 314ms
-a mod is unhappy  3×
-server ready
+╭ CPU ───────────────╮ ╭ MEM ────── 8.0 GiB ╮ ╭ PLAYERS ───────────╮ ╭ WORLD SAVE ────────╮
+│11.0%               │ │3.9 GiB             │ │1                   │ │314                 │
+│▂▂▁▁▁▇▁▂▂▁▁▁▁▁▂▂▁▁▁▁│ │▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄│ │                    │ │                   ▁│
+│                    │ │                    │ │Dalinar             │ │                    │
+╰────────────────────╯ ╰────────────────────╯ ╰────────────────────╯ ╰────────────────────╯
+╭ CONSOLE ───────────────────────────────────────────────────────────────── valheim-huldra ╮
+│Dalinar joined                                                                            │
+│world saved in 314ms                                                                      │
+│a mod is unhappy  3×                                                                      │
+│server ready                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────╯

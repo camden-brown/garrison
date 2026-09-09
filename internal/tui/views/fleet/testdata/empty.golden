@@ -1,4 +1,31 @@
-SERVERS  u start · S stop · ↑↓ move · q quit
-
-No containers labelled garrison.managed=1.
-The fleet is found by label, so anything Garrison created will appear here.
+╭ PLAYERS ───────────╮ ╭ FLEET CPU ─────────╮ ╭ FLEET MEM ─────────╮ ╭ ATTENTION ────── a ╮
+│0                   │ │0%                  │ │0 B                 │ │0                   │
+│                    │ │                    │ │                    │ │                    │
+│                    │ │                    │ │                    │ │all clear           │
+╰────────────────────╯ ╰────────────────────╯ ╰────────────────────╯ ╰────────────────────╯
+╭ SERVERS ───────────────────────────────────────────────────── u start · S stop · ↑↓ move ╮
+│No containers labelled garrison.managed=1.                                                │
+│The fleet is found by label, so anything Garrison created appears here.                   │
+╰──────────────────────────────────────────────────────────────────────────────────────────╯
+╭ ATTENTION ────────────────────────── a ack ╮ ╭ ACTIVITY ──────────────────── all servers ╮
+│Nothing needs attention.                    │ │Nothing yet.                               │
+│                                            │ │                                           │
+│                                            │ │                                           │
+│                                            │ │                                           │
+│                                            │ │                                           │
+│                                            │ │                                           │
+│                                            │ │                                           │
+│                                            │ │                                           │
+│                                            │ │                                           │
+│                                            │ │                                           │
+│                                            │ │                                           │
+│                                            │ │                                           │
+│                                            │ │                                           │
+│                                            │ │                                           │
+│                                            │ │                                           │
+│                                            │ │                                           │
+│────────────────────────────────────────────│ │                                           │
+│HOST                                        │ │                                           │
+│npipe · healthy                             │ │                                           │
+│                                            │ │                                           │
+╰────────────────────────────────────────────╯ ╰───────────────────────────────────────────╯

@@ -1,16 +1,21 @@
-// Package fleet is the Fleet view: every server on one line.
+// Package fleet is the Fleet view: every server on one line, and the three
+// questions you ask about a fleet without meaning to.
 //
-// It is the default screen and the one left on the monitor, so it answers one
-// question without scrolling — is anything wrong — and offers the two verbs
-// that fix the usual answer.
+// It is the default screen and the one left on the monitor, so it answers "is
+// anything wrong" without scrolling, and offers the two verbs that fix the
+// usual answer.
 package fleet
 
 import (
+	"fmt"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/camden-brown/garrison/internal/core"
 	"github.com/camden-brown/garrison/internal/model"
@@ -111,7 +116,6 @@ func neighbour(snap core.Snapshot, from string, delta int) string {
 	if len(snap.Servers) == 0 {
 		return ""
 	}
-
 	i := 0
 	for n, srv := range snap.Servers {
 		if srv.Name == from {
@@ -129,119 +133,445 @@ func neighbour(snap core.Snapshot, from string, delta int) string {
 	return snap.Servers[i].Name
 }
 
-// columns is the width budget for one row, recomputed per frame.
-//
-// Every view has a real narrow layout rather than a clipped wide one, so the
-// columns that stop earning their space are dropped rather than squeezed:
-// ports go first, then the note.
-type columns struct {
-	name, game, state, uptime, ports, note int
-}
-
-func layout(width int) columns {
-	c := columns{name: 20, game: 12, state: 12, uptime: 10, ports: 20}
-
-	switch {
-	case width >= 110:
-	case width >= 84:
-		c.ports = 14
-	default:
-		c.ports = 0
-		c.name = 16
-		c.game = 10
-	}
-
-	// 2 cells of cursor gutter, then one space after every column that
-	// precedes the note. The glyph lives inside the state column so the
-	// header lines up with the rows without a special case.
-	seps := 4
-	if c.ports > 0 {
-		seps = 5
-	}
-	c.note = width - (2 + c.name + c.game + c.state + c.uptime + c.ports + seps)
-	if c.note < 0 {
-		c.note = 0
-	}
-	return c
-}
-
-// stateCell is the glyph and the word in one column, so the two can never
-// drift apart and the header only has to describe one field.
-func stateCell(t *comp.Theme, state model.State, width int) string {
-	glyph := t.StateGlyph(state)
-	word := comp.Pad(t.StateWord(state), width-2)
-	return t.StateStyle(state).Render(glyph + " " + word)
-}
-
 func (v *View) Render(f tui.Frame, snap core.Snapshot) string {
 	t := f.Theme
-	cols := layout(f.Width)
 	target := selectedOr(f.Server, snap)
 
 	var b strings.Builder
-	b.WriteString(t.Title.Render("SERVERS"))
-	b.WriteString("  ")
-	b.WriteString(t.Dim.Render(hints(v.confirm != "")))
-	b.WriteString("\n\n")
 
-	if !snap.Engine.OK {
-		b.WriteString(t.Err.Render(engineBanner(snap.Engine)))
-		b.WriteString("\n\n")
+	// The strip at the top answers "is anything wrong" from across the room.
+	// Under 30 rows it collapses to a line of values, which is the narrow
+	// layout rather than a clipped wide one.
+	if f.Height >= 26 {
+		b.WriteString(comp.TileStrip(t, f.Width, tiles(snap)))
+	} else {
+		b.WriteString(comp.InlineTiles(t, f.Width, tiles(snap)))
 	}
-
-	if len(snap.Servers) == 0 {
-		b.WriteString(emptyExplanation(t, snap))
-		b.WriteString("\n")
-		return b.String()
-	}
-
-	b.WriteString(t.Header.Render(header(cols)))
 	b.WriteString("\n")
 
-	for _, srv := range snap.Servers {
-		b.WriteString(v.row(f, cols, srv, srv.Name == target))
-		b.WriteString("\n")
-	}
+	b.WriteString(comp.Panel{
+		Theme:   t,
+		Title:   "SERVERS",
+		Right:   hints(v.confirm != ""),
+		Width:   f.Width,
+		Focused: f.Focused,
+	}.Render(v.table(f, snap, target)))
+	b.WriteString("\n")
 
-	if v.confirm != "" {
-		b.WriteString("\n")
-		b.WriteString(t.Accent.Render("stop " + v.confirm + "?  y / n"))
-		b.WriteString("\n")
-	}
-
-	if n := latestError(snap); n != "" {
-		b.WriteString("\n")
-		b.WriteString(t.Err.Render(comp.Truncate(n, f.Width)))
+	// Attention and activity sit side by side, and only when there is room
+	// left after the table.
+	remaining := f.Height - 8 - len(snap.Servers) - 4
+	if remaining >= 6 {
+		left := f.Width / 2
+		right := f.Width - left - 1
+		b.WriteString(comp.Columns(1,
+			comp.Panel{Theme: t, Title: "ATTENTION", Right: "a ack", Width: left, Height: remaining}.
+				Render(attention(f, snap, remaining-2)),
+			comp.Panel{Theme: t, Title: "ACTIVITY", Right: "all servers", Width: right, Height: remaining}.
+				Render(activity(f, snap, remaining-2)),
+		))
 		b.WriteString("\n")
 	}
 
 	return b.String()
 }
 
+// tiles is the fleet at a glance.
+//
+// The CPU and memory figures are the fleet's, not the machine's: Garrison sees
+// what the engine reports for containers it manages, and inventing a
+// host-wide number from that would be a guess presented as a measurement. The
+// capacity beside each one comes from the engine, so the proportion is real.
+func tiles(snap core.Snapshot) []comp.Tile {
+	var players int
+	var cpu, mem float64
+	for _, srv := range snap.Servers {
+		players += len(srv.Players)
+		if p, ok := srv.CPU.Last(); ok {
+			cpu += p.Mean
+		}
+		if p, ok := srv.Mem.Last(); ok {
+			mem += p.Mean
+		}
+	}
+
+	cores := snap.Engine.NCPU
+	coreNote := ""
+	if cores > 0 {
+		coreNote = strconv.Itoa(cores) + "c"
+	}
+	memNote := ""
+	if snap.Engine.MemTotal > 0 {
+		memNote = comp.Bytes(snap.Engine.MemTotal)
+	}
+
+	attention := 0
+	for _, n := range snap.Notices {
+		if n.Level != core.LevelInfo {
+			attention++
+		}
+	}
+
+	return []comp.Tile{
+		{
+			Label:  "PLAYERS",
+			Value:  strconv.Itoa(players),
+			Points: fleetSeries(snap, func(s core.Server) model.History { return model.History{} }),
+		},
+		{
+			Label:  "FLEET CPU",
+			Right:  coreNote,
+			Value:  fmt.Sprintf("%.0f%%", cpu),
+			Points: sumSeries(snap, func(s core.Server) model.History { return s.CPU }),
+			Min:    0,
+			Max:    float64(cores) * 100,
+		},
+		{
+			Label:  "FLEET MEM",
+			Right:  memNote,
+			Value:  comp.Bytes(int64(mem)),
+			Points: sumSeries(snap, func(s core.Server) model.History { return s.Mem }),
+			Min:    0,
+			Max:    float64(snap.Engine.MemTotal),
+		},
+		{
+			Label:  "ATTENTION",
+			Right:  "a",
+			Value:  strconv.Itoa(attention),
+			Note:   attentionSummary(snap),
+			Accent: attention > 0,
+		},
+	}
+}
+
+// sumSeries adds one series across the fleet, point for point from the newest
+// backwards. Servers sample independently so the points do not line up exactly;
+// aligning by position is close enough for a strip 21 cells wide, and the
+// alternative is interpolating a picture nobody reads that precisely.
+func sumSeries(snap core.Snapshot, pick func(core.Server) model.History) []model.Point {
+	var longest int
+	for _, srv := range snap.Servers {
+		if n := len(pick(srv).Hot); n > longest {
+			longest = n
+		}
+	}
+	if longest == 0 {
+		return nil
+	}
+
+	out := make([]model.Point, longest)
+	for _, srv := range snap.Servers {
+		hot := pick(srv).Hot
+		offset := longest - len(hot)
+		for i, p := range hot {
+			out[offset+i].Mean += p.Mean
+			out[offset+i].At = p.At
+		}
+	}
+	return out
+}
+
+func fleetSeries(core.Snapshot, func(core.Server) model.History) []model.Point { return nil }
+
+func attentionSummary(snap core.Snapshot) string {
+	var crashed, ill int
+	for _, srv := range snap.Servers {
+		if srv.State == model.StateCrashed {
+			crashed++
+		}
+		if unhealthy(srv) {
+			ill++
+		}
+	}
+
+	var parts []string
+	if crashed > 0 {
+		parts = append(parts, strconv.Itoa(crashed)+" crash")
+	}
+	if ill > 0 {
+		parts = append(parts, strconv.Itoa(ill)+" unhealthy")
+	}
+	if len(parts) == 0 {
+		return "all clear"
+	}
+	return strings.Join(parts, " · ")
+}
+
+// attention is the alert pane, with the host panel beneath it.
+func attention(f tui.Frame, snap core.Snapshot, height int) string {
+	t := f.Theme
+	width := f.Width/2 - 2
+
+	var b strings.Builder
+	shown := 0
+	room := height - 5
+
+	// A crashed or unhealthy server is not a Notice — nothing raised it, it
+	// simply is — but it is certainly something that needs attention, and a
+	// pane that omits it while the tile above counts it is a pane you stop
+	// believing.
+	for _, srv := range snap.Servers {
+		if shown >= room {
+			break
+		}
+		reason := srv.Detail
+		switch {
+		case srv.State == model.StateCrashed:
+			if reason == "" {
+				reason = "crashed"
+			}
+			b.WriteString(t.Err.Render(comp.Truncate(glyphFor(t, true)+" "+srv.Name+" — "+reason, width)))
+		case unhealthy(srv):
+			b.WriteString(t.Accent.Render(comp.Truncate(glyphFor(t, false)+" "+srv.Name+" — "+srv.Health.Detail, width)))
+		default:
+			continue
+		}
+		b.WriteString("\n")
+		shown++
+	}
+
+	for i := len(snap.Notices) - 1; i >= 0 && shown < room; i-- {
+		n := snap.Notices[i]
+		if n.Level == core.LevelInfo {
+			continue
+		}
+
+		style := t.Accent
+		if n.Level == core.LevelError {
+			style = t.Err
+		}
+		b.WriteString(style.Render(comp.Truncate(glyphFor(t, n.Level == core.LevelError)+" "+n.Text, width)))
+		b.WriteString("\n")
+		shown++
+	}
+
+	if shown == 0 {
+		b.WriteString(t.Dim.Render("Nothing needs attention."))
+		b.WriteString("\n")
+	}
+
+	// The host panel shares the pane, because "is the machine alright" is
+	// the same question as "is anything wrong" asked one level down.
+	for b.Len() > 0 && strings.Count(b.String(), "\n") < height-4 {
+		b.WriteString("\n")
+	}
+	b.WriteString(t.Dim.Render(strings.Repeat("─", width)))
+	b.WriteString("\n")
+	b.WriteString(t.Header.Render("HOST"))
+	b.WriteString("\n")
+	b.WriteString(t.Dim.Render(comp.Truncate(hostLine(snap), width)))
+	return b.String()
+}
+
+func glyphFor(t *comp.Theme, bad bool) string {
+	if t.ASCII {
+		if bad {
+			return "x"
+		}
+		return "!"
+	}
+	if bad {
+		return "✕"
+	}
+	return "!"
+}
+
+func hostLine(snap core.Snapshot) string {
+	e := snap.Engine
+
+	parts := []string{}
+	if e.Version != "" {
+		parts = append(parts, "docker "+e.Version)
+	}
+	if e.Transport != "" {
+		parts = append(parts, e.Transport)
+	}
+	if e.OK {
+		parts = append(parts, "healthy")
+	} else {
+		parts = append(parts, "unreachable")
+	}
+	return strings.Join(parts, " · ")
+}
+
+// activity is the fleet-wide feed: every server's classified output, merged
+// and newest first.
+func activity(f tui.Frame, snap core.Snapshot, height int) string {
+	t := f.Theme
+	width := f.Width/2 - 2
+
+	type line struct {
+		at     time.Time
+		server string
+		kind   model.Kind
+		text   string
+	}
+
+	var all []line
+	for _, srv := range snap.Servers {
+		for _, ev := range srv.Console {
+			text := ev.Text
+			if text == "" {
+				text = ev.Raw
+			}
+			if strings.TrimSpace(text) == "" || ev.Kind == model.KindInfo {
+				// The feed is for things that happened, not for a server
+				// narrating its own startup.
+				continue
+			}
+			all = append(all, line{at: ev.At, server: srv.Name, kind: ev.Kind, text: text})
+		}
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].at.After(all[j].at) })
+
+	if len(all) == 0 {
+		return t.Dim.Render("Nothing yet.")
+	}
+	if len(all) > height {
+		all = all[:height]
+	}
+
+	var b strings.Builder
+	for _, l := range all {
+		stamp := l.at.Format("15:04")
+		server := l.server
+		body := comp.Pad(comp.Truncate(l.text, width-len(stamp)-len(server)-4), width-len(stamp)-len(server)-4)
+
+		b.WriteString(t.Dim.Render(stamp) + " ")
+		b.WriteString(kindStyle(t, l.kind).Render(kindGlyph(t, l.kind)) + " ")
+		b.WriteString(body + " ")
+		b.WriteString(t.Dim.Render(server))
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+func kindGlyph(t *comp.Theme, k model.Kind) string {
+	if t.ASCII {
+		switch k {
+		case model.KindJoin:
+			return ">"
+		case model.KindLeave:
+			return "<"
+		case model.KindDeath, model.KindError:
+			return "x"
+		case model.KindWarn:
+			return "!"
+		}
+		return "."
+	}
+	switch k {
+	case model.KindJoin:
+		return "→"
+	case model.KindLeave:
+		return "←"
+	case model.KindDeath, model.KindError:
+		return "✕"
+	case model.KindWarn:
+		return "!"
+	case model.KindChat:
+		return "\""
+	}
+	return "·"
+}
+
+func kindStyle(t *comp.Theme, k model.Kind) lipglossStyle {
+	switch k {
+	case model.KindDeath, model.KindError:
+		return t.Err
+	case model.KindWarn:
+		return t.Accent
+	case model.KindChat:
+		return t.Chat
+	}
+	return t.Dim
+}
+
+// lipglossStyle is a local alias so the helpers above read without importing
+// lipgloss for one type name.
+type lipglossStyle = lipgloss.Style
+
 func hints(confirming bool) string {
 	if confirming {
 		return "y confirm · n cancel"
 	}
-	return "u start · S stop · ↑↓ move · q quit"
+	return "u start · S stop · ↑↓ move"
+}
+
+// columns is the width budget for one table row, recomputed per frame.
+//
+// Every view has a real narrow layout rather than a clipped wide one, so the
+// columns that stop earning their space are dropped rather than squeezed:
+// ports go first, then game, then the note.
+type columns struct {
+	name, game, state, plyr, cpu, mem, uptime, last int
+}
+
+func layout(width int) columns {
+	c := columns{name: 16, game: 9, state: 11, plyr: 4, cpu: 6, mem: 9, uptime: 7}
+
+	fixed := func(c columns) int {
+		n := 2 + c.name + c.state + c.plyr + c.cpu + c.mem + c.uptime + 6
+		if c.game > 0 {
+			n += c.game + 1
+		}
+		return n
+	}
+
+	// Game goes before the last column narrows past readable: the state
+	// glyph already distinguishes the rows, and "16261/udp" or "exit 137"
+	// is the thing you came to read.
+	if width < fixed(c)+14 {
+		c.game = 0
+	}
+	if width < fixed(c)+14 {
+		c.name = 13
+	}
+
+	c.last = width - fixed(c)
+	if c.last < 0 {
+		c.last = 0
+	}
+	return c
+}
+
+func (v *View) table(f tui.Frame, snap core.Snapshot, target string) string {
+	t := f.Theme
+	c := layout(f.Width - 2)
+
+	if len(snap.Servers) == 0 {
+		return emptyExplanation(t, snap)
+	}
+
+	var b strings.Builder
+	b.WriteString(t.Header.Render(header(c)))
+	b.WriteString("\n")
+	for _, srv := range snap.Servers {
+		b.WriteString(v.row(f, c, srv, srv.Name == target))
+		b.WriteString("\n")
+	}
+
+	if v.confirm != "" {
+		b.WriteString("\n")
+		b.WriteString(t.Accent.Render("stop " + v.confirm + "?  y / n"))
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func header(c columns) string {
-	var b strings.Builder
-	b.WriteString("  ")
-	b.WriteString(comp.Pad("NAME", c.name))
-	b.WriteString(" ")
-	b.WriteString(comp.Pad("GAME", c.game))
-	b.WriteString(" ")
-	b.WriteString(comp.Pad("STATE", c.state))
-	b.WriteString(" ")
-	b.WriteString(comp.Pad("UPTIME", c.uptime))
-	if c.ports > 0 {
-		b.WriteString(" ")
-		b.WriteString(comp.Pad("PORTS", c.ports))
+	cells := []string{comp.Pad("  NAME", c.name+2)}
+	if c.game > 0 {
+		cells = append(cells, comp.Pad("GAME", c.game))
 	}
-	b.WriteString(" ")
-	b.WriteString(comp.Pad("NOTE", c.note))
-	return strings.TrimRight(b.String(), " ")
+	cells = append(cells,
+		comp.Pad("STATE", c.state),
+		comp.PadLeft("PLYR", c.plyr),
+		comp.PadLeft("CPU", c.cpu),
+		comp.PadLeft("MEM", c.mem),
+		comp.PadLeft("UPTIME", c.uptime),
+		comp.Pad("PORTS / TASK", c.last),
+	)
+	return strings.TrimRight(strings.Join(cells, " "), " ")
 }
 
 func (v *View) row(f tui.Frame, c columns, srv core.Server, selected bool) string {
@@ -249,40 +579,70 @@ func (v *View) row(f tui.Frame, c columns, srv core.Server, selected bool) strin
 
 	cursor := "  "
 	if selected {
-		cursor = t.Accent.Render("▌") + " "
+		marker := "▌"
 		if t.ASCII {
-			cursor = t.Accent.Render(">") + " "
+			marker = ">"
 		}
+		cursor = t.Accent.Render(marker) + " "
 	}
 
-	name := comp.Pad(srv.Name, c.name)
+	nameStyle := t.Dim
 	if selected {
-		name = t.Selected.Render(name)
+		nameStyle = t.Selected
 	}
 
-	var b strings.Builder
-	b.WriteString(cursor)
-	b.WriteString(name)
-	b.WriteString(" ")
-	b.WriteString(comp.Pad(srv.Game, c.game))
-	b.WriteString(" ")
-	// State is glyph plus word, both of them, always. Colour is the third
-	// carrier and never the only one.
-	b.WriteString(stateCell(t, srv.State, c.state))
-	b.WriteString(" ")
-	b.WriteString(t.Dim.Render(comp.Pad(comp.Duration(srv.Uptime(f.Now)), c.uptime)))
-	if c.ports > 0 {
-		b.WriteString(" ")
-		b.WriteString(t.Dim.Render(comp.Pad(portList(srv.Ports), c.ports)))
+	cells := []string{cursor + nameStyle.Render(comp.Pad(srv.Name, c.name))}
+	if c.game > 0 {
+		cells = append(cells, t.Dim.Render(comp.Pad(srv.Game, c.game)))
 	}
-	b.WriteString(" ")
-	b.WriteString(noteCell(t, srv, c.note))
-	return strings.TrimRight(b.String(), " ")
+	cells = append(cells,
+		stateCell(t, srv.State, c.state),
+		t.Dim.Render(comp.PadLeft(playerCount(srv), c.plyr)),
+		t.Dim.Render(comp.PadLeft(cpuCell(srv), c.cpu)),
+		t.Dim.Render(comp.PadLeft(memCell(srv), c.mem)),
+		t.Dim.Render(comp.PadLeft(comp.Duration(srv.Uptime(f.Now)), c.uptime)),
+		lastCell(t, srv, c.last),
+	)
+	return strings.TrimRight(strings.Join(cells, " "), " ")
 }
 
-// noteCell is what the row has to say for itself: an operation in flight beats
-// a stale reason, because the operator just pressed the key that caused it.
-func noteCell(t *comp.Theme, srv core.Server, width int) string {
+// stateCell is the glyph and the word in one column, so the two can never
+// drift apart and the header only has to describe one field.
+func stateCell(t *comp.Theme, state model.State, width int) string {
+	return t.StateStyle(state).Render(t.StateGlyph(state) + " " + comp.Pad(t.StateWord(state), width-2))
+}
+
+func playerCount(srv core.Server) string {
+	if !srv.State.Live() {
+		return "—"
+	}
+	return strconv.Itoa(len(srv.Players))
+}
+
+func cpuCell(srv core.Server) string {
+	p, ok := srv.CPU.Last()
+	if !ok || !srv.State.Live() {
+		return "—"
+	}
+	return fmt.Sprintf("%.1f%%", p.Mean)
+}
+
+func memCell(srv core.Server) string {
+	p, ok := srv.Mem.Last()
+	if !ok || !srv.State.Live() {
+		return "—"
+	}
+	return comp.Bytes(int64(p.Mean))
+}
+
+// lastCell is one column carrying whichever of three things the row most needs
+// to say, in that order: what is happening to it, why it is not running, and
+// where to reach it.
+//
+// One column rather than three because they are never all interesting at once
+// — a server being restarted is not also telling you its ports — and the width
+// it saves is what lets the game column survive beside the rail.
+func lastCell(t *comp.Theme, srv core.Server, width int) string {
 	if srv.Busy != core.OpNone {
 		return t.Accent.Render(comp.Pad(busyText(srv), width))
 	}
@@ -294,16 +654,30 @@ func noteCell(t *comp.Theme, srv core.Server, width int) string {
 		case srv.State == model.StateStopped && srv.ExitCode != 0:
 			// Deliberately down, but it did not go quietly. The glyph stays
 			// grey because the state is honest — Garrison asked for this —
-			// while the reason stays loud, because a server killed before it
-			// finished writing is a save you may not have.
+			// while the reason stays loud, because a server killed before
+			// it finished writing is a save you may not have.
 			style = t.Err
 		}
 		return style.Render(comp.Pad(srv.Detail, width))
 	}
-	if !srv.Health.OK && srv.Health.Detail != "" {
+	if unhealthy(srv) {
 		return t.Err.Render(comp.Pad("unhealthy: "+srv.Health.Detail, width))
 	}
+	if srv.State.Live() {
+		return t.Dim.Render(comp.Pad(portList(srv.Ports), width))
+	}
 	return comp.Pad("", width)
+}
+
+// unhealthy reports a failed healthcheck.
+//
+// A zero model.Health means nobody has looked, not that the answer was bad —
+// the driver reports OK for a container with no healthcheck declared, because
+// absence of a check is not evidence of ill health. Treating the zero value as
+// a failure paints every server amber the moment anything constructs a
+// Container without filling it in.
+func unhealthy(srv core.Server) bool {
+	return !srv.Health.OK && srv.Health.Detail != ""
 }
 
 // busyText says what is happening and, for a stop, how long it may take.
@@ -337,35 +711,14 @@ func proto(spec string) string {
 	return "tcp"
 }
 
-func engineBanner(e core.Engine) string {
-	transport := e.Transport
-	if transport == "" {
-		transport = "docker"
-	}
-	msg := "! " + transport + " unreachable"
-	if e.Err != "" {
-		msg += " — " + e.Err
-	}
-	return msg
-}
-
 // emptyExplanation is the difference between a view that looks broken and one
 // that tells you what to do. An empty fleet has two causes and they need
 // different answers.
 func emptyExplanation(t *comp.Theme, snap core.Snapshot) string {
 	if !snap.Engine.OK {
-		return t.Dim.Render("Nothing to show until the engine answers.") + "\n" +
-			t.Dim.Render("Garrison keeps trying; it will fill in on its own.")
+		return t.Err.Render("The container engine is not answering.") + "\n" +
+			t.Dim.Render("Garrison keeps trying; the fleet will fill in on its own.")
 	}
 	return t.Dim.Render("No containers labelled garrison.managed=1.") + "\n" +
-		t.Dim.Render("The fleet is found by label, so anything Garrison created will appear here.")
-}
-
-func latestError(snap core.Snapshot) string {
-	for i := len(snap.Notices) - 1; i >= 0; i-- {
-		if snap.Notices[i].Level == core.LevelError {
-			return snap.Notices[i].Text
-		}
-	}
-	return ""
+		t.Dim.Render("The fleet is found by label, so anything Garrison created appears here.")
 }
