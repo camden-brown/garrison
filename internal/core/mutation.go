@@ -48,7 +48,7 @@ func (m FleetObserved) apply(s Snapshot) Snapshot {
 		prior[srv.Name] = srv
 	}
 
-	servers := make([]Server, 0, len(m.Containers))
+	observed := make([]Server, 0, len(m.Containers))
 	for _, c := range m.Containers {
 		was := prior[c.Instance]
 
@@ -73,15 +73,73 @@ func (m FleetObserved) apply(s Snapshot) Snapshot {
 		srv.Health = c.Health
 		srv.PlanHash = c.PlanHash
 		srv.StopRequested = requested
-		srv.MetricLabel = m.MetricLabels[c.Game]
-		servers = append(servers, srv)
+		srv.Created = true
+		if label, ok := m.MetricLabels[c.Game]; ok {
+			srv.MetricLabel = label
+		}
+		observed = append(observed, srv)
 	}
 
 	s.At = m.At
 	s.Engine.OK = true
 	s.Engine.Err = ""
 	s.Engine.LastOK = m.At
-	return s.withServers(servers)
+	return s.withServers(merge(s, observed))
+}
+
+// observedFrom keeps only the servers a container was seen for, discarding the
+// configured-but-not-created rows so merge can rebuild them.
+func observedFrom(servers []Server) []Server {
+	out := make([]Server, 0, len(servers))
+	for _, srv := range servers {
+		if srv.Created {
+			out = append(out, srv)
+		}
+	}
+	return out
+}
+
+// merge is the union of what the engine reported and what the config
+// directory says.
+//
+// The two sets differ in both directions and both differences are worth
+// showing. A configured server with no container has not been created yet,
+// which is not the same as stopped. A container with no file is one Garrison
+// found by label — a fleet recovered after losing %APPDATA%, or something
+// created by hand — and hiding it would be worse than showing it without its
+// settings.
+func merge(s Snapshot, observed []Server) []Server {
+	out := make([]Server, 0, len(observed)+len(s.instances))
+	seen := make(map[string]bool, len(observed))
+
+	for _, srv := range observed {
+		if inst, ok := s.instances[srv.Name]; ok {
+			srv.Instance, srv.Configured = inst, true
+			if srv.Game == "" {
+				srv.Game = inst.Game
+			}
+		} else {
+			srv.Instance, srv.Configured = model.Instance{}, false
+		}
+		seen[srv.Name] = true
+		out = append(out, srv)
+	}
+
+	for name, inst := range s.instances {
+		if seen[name] {
+			continue
+		}
+		out = append(out, Server{
+			Name:       name,
+			Game:       inst.Game,
+			Instance:   inst,
+			Configured: true,
+			State:      model.StateStopped,
+			Detail:     "not created yet",
+			Health:     model.Health{OK: true},
+		})
+	}
+	return out
 }
 
 // classify turns what the engine reported into what the operator should read,
@@ -401,6 +459,32 @@ func (m OperationEnded) apply(s Snapshot) Snapshot {
 		})
 	}
 	return s
+}
+
+// InstancesLoaded is what the config directory says.
+//
+// It replaces the whole set rather than merging, because the directory is the
+// authority: a file somebody deleted should take its server with it.
+type InstancesLoaded struct {
+	At        time.Time
+	Instances []model.Instance
+}
+
+func (m InstancesLoaded) apply(s Snapshot) Snapshot {
+	byName := make(map[string]model.Instance, len(m.Instances))
+	for _, inst := range m.Instances {
+		byName[inst.Name] = inst
+	}
+
+	s.At = m.At
+	s.instances = byName
+	return s.withServers(merge(s, observedFrom(s.Servers)))
+}
+
+// Instance returns a server's configuration.
+func (s Snapshot) Instance(name string) (model.Instance, bool) {
+	inst, ok := s.instances[name]
+	return inst, ok
 }
 
 // HostDescribed records the engine's own figures.

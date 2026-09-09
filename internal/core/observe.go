@@ -31,6 +31,11 @@ func (s *Store) LogEventsRead(ctx context.Context, instance string, events []mod
 	s.Send(ctx, LogEventsRead{At: s.now(), Server: instance, Events: events})
 }
 
+// InstancesLoaded records what the config directory says.
+func (s *Store) InstancesLoaded(ctx context.Context, instances []model.Instance) {
+	s.Send(ctx, InstancesLoaded{At: s.now(), Instances: instances})
+}
+
 // HostDescribed records the engine's own figures.
 func (s *Store) HostDescribed(ctx context.Context, at time.Time, info host.Info) {
 	s.Send(ctx, HostDescribed{At: at, Info: info})

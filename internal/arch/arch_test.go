@@ -38,6 +38,7 @@ var banned = map[string][]string{
 	"internal/host":     {"internal/games", "internal/core", "internal/tasks", "internal/services", "internal/tui", "cmd/"},
 	"internal/tasks":    {"internal/core", "internal/tui", "cmd/"},
 	"internal/services": {"internal/core", "internal/tui", "cmd/"},
+	"internal/config":   {"internal/core", "internal/tui", "internal/host", "internal/games", "cmd/"},
 	"internal/core":     {"internal/tui", "cmd/"},
 	"internal/tui":      {"cmd/"},
 }
@@ -65,8 +66,10 @@ var mustFind = []string{
 	"internal/games",
 	"internal/host",
 	"internal/host/docker",
+	"internal/config",
 	"internal/model",
 	"internal/services/fleet",
+	"internal/tasks",
 	"internal/tui",
 	"internal/tui/views/fleet",
 }

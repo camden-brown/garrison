@@ -30,6 +30,13 @@ type Snapshot struct {
 	Engine  Engine
 	Servers []Server
 	Notices []Notice
+
+	// instances is what the config files say, keyed by name. It is kept
+	// separately from Servers because the two are different sets: a server
+	// can be configured and not yet created, or running and not configured
+	// at all — Garrison finds containers by label, so it will meet servers
+	// it has no file for.
+	instances map[string]model.Instance
 }
 
 // Engine is what Garrison knows about the container runtime it is talking to.
@@ -112,6 +119,18 @@ type Server struct {
 	// connecting holds clients that have attached but not yet named
 	// themselves, oldest first. See the note on rosterApply.
 	connecting []string
+
+	// Instance is the configured form: image, ports, resources, settings.
+	// Zero when Configured is false, which happens for a container found by
+	// label that Garrison has no file for — a fleet recovered after losing
+	// the config directory, or one somebody created by hand.
+	Instance   model.Instance
+	Configured bool
+
+	// Created reports whether a container exists. A configured server that
+	// has never been created is a real thing to show: it is the difference
+	// between "stopped" and "not built yet".
+	Created bool
 
 	// GameMetric is the fourth dashboard tile, and MetricLabel names it.
 	//

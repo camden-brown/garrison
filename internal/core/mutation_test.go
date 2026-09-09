@@ -667,3 +667,120 @@ func itoa(n int) string {
 	}
 	return string(b)
 }
+
+func instance(name, game string) model.Instance {
+	return model.Instance{Name: name, Game: game, Settings: map[string]any{"ServerName": name}}
+}
+
+// A configured server that has never been created is a real thing to show. It
+// is the difference between "stopped" and "not built yet", and a fleet that
+// hides it gives you nowhere to press the key that creates it.
+func TestConfiguredButNotCreatedAppears(t *testing.T) {
+	s := apply(Snapshot{},
+		InstancesLoaded{At: at, Instances: []model.Instance{instance("valheim-huldra", "valheim")}},
+		observed(),
+	)
+
+	srv, ok := s.Server("valheim-huldra")
+	if !ok {
+		t.Fatal("a configured server with no container is missing from the fleet")
+	}
+	if srv.Created {
+		t.Error("Created = true for a server with no container")
+	}
+	if !srv.Configured {
+		t.Error("Configured = false for a server that has a file")
+	}
+	if srv.Detail == "" {
+		t.Error("nothing explains why it is not running")
+	}
+}
+
+// A container found by label with no file is one Garrison recovered, or one
+// somebody made by hand. Hiding it is worse than showing it without settings.
+func TestUnconfiguredContainerStillAppears(t *testing.T) {
+	s := apply(Snapshot{}, observed(host.Container{
+		Instance: "made-by-hand", Game: "valheim", State: model.StateRunning,
+	}))
+
+	srv, ok := s.Server("made-by-hand")
+	if !ok {
+		t.Fatal("a container with no config file vanished from the fleet")
+	}
+	if srv.Configured {
+		t.Error("Configured = true for a server with no file")
+	}
+	if !srv.Created {
+		t.Error("Created = false for a container that exists")
+	}
+}
+
+func TestConfigAndContainerAreMatchedUp(t *testing.T) {
+	s := apply(Snapshot{},
+		InstancesLoaded{At: at, Instances: []model.Instance{instance("valheim-huldra", "valheim")}},
+		observed(host.Container{Instance: "valheim-huldra", Game: "valheim", State: model.StateRunning}),
+	)
+
+	srv, _ := s.Server("valheim-huldra")
+	if !srv.Configured || !srv.Created {
+		t.Fatalf("Configured=%v Created=%v, want both", srv.Configured, srv.Created)
+	}
+	if srv.Instance.Settings["ServerName"] != "valheim-huldra" {
+		t.Errorf("the settings did not reach the server row: %+v", srv.Instance.Settings)
+	}
+	if len(s.Servers) != 1 {
+		t.Errorf("got %d servers, want the two sources merged into one", len(s.Servers))
+	}
+}
+
+// The directory is the authority: a file somebody deleted takes its server
+// with it, unless a container is still running under that name.
+func TestDeletedConfigRemovesTheRow(t *testing.T) {
+	s := apply(Snapshot{},
+		InstancesLoaded{At: at, Instances: []model.Instance{instance("gone", "valheim")}},
+		observed(),
+	)
+	if _, ok := s.Server("gone"); !ok {
+		t.Fatal("setup failed")
+	}
+
+	s = apply(s, InstancesLoaded{At: at, Instances: nil})
+	if _, ok := s.Server("gone"); ok {
+		t.Error("the row survived its config file being deleted")
+	}
+}
+
+func TestDeletedConfigKeepsARunningContainer(t *testing.T) {
+	s := apply(Snapshot{},
+		InstancesLoaded{At: at, Instances: []model.Instance{instance("busy", "valheim")}},
+		observed(host.Container{Instance: "busy", Game: "valheim", State: model.StateRunning}),
+		InstancesLoaded{At: at, Instances: nil},
+	)
+
+	srv, ok := s.Server("busy")
+	if !ok {
+		t.Fatal("a running container vanished when its config file was deleted")
+	}
+	if srv.Configured {
+		t.Error("Configured = true after the file was deleted")
+	}
+}
+
+// Loading config must not throw away live state, the same way a poll must not.
+func TestLoadingConfigKeepsHistoryAndRoster(t *testing.T) {
+	s := apply(Snapshot{},
+		observed(host.Container{Instance: "a", Game: "valheim", State: model.StateRunning}),
+		StatsSampled{At: at, Server: "a", Sample: host.Sample{CPUPct: 5}},
+		logs("a", connect("id-1"), join("Dalinar")),
+	)
+
+	s = apply(s, InstancesLoaded{At: at, Instances: []model.Instance{instance("a", "valheim")}})
+
+	srv, _ := s.Server("a")
+	if len(srv.CPU.Hot) == 0 {
+		t.Error("loading config discarded the sampled history")
+	}
+	if len(srv.Players) != 1 {
+		t.Error("loading config discarded the roster")
+	}
+}
