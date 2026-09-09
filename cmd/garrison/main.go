@@ -4,16 +4,30 @@
 // subcommand, so a scheduled job can reach it — the TUI and the CLI are peers
 // over internal/core, not wrappers around each other.
 //
-// Neither exists yet: this is the M0 skeleton. See docs/DESIGN.md.
+// This is M0: the Docker driver, the store, and a Fleet view that lists
+// labelled containers and can start and stop them. See docs/DESIGN.md.
 package main
 
 import (
+	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"runtime"
 	"strings"
+	"sync"
+	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/camden-brown/garrison/internal/core"
 	"github.com/camden-brown/garrison/internal/games"
+	"github.com/camden-brown/garrison/internal/host/docker"
+	"github.com/camden-brown/garrison/internal/services/fleet"
+	"github.com/camden-brown/garrison/internal/tui"
+	fleetview "github.com/camden-brown/garrison/internal/tui/views/fleet"
 
 	// Registers every game. Adding one is a line in that package.
 	_ "github.com/camden-brown/garrison/internal/games/all"
@@ -23,12 +37,157 @@ import (
 var version = "dev"
 
 func main() {
+	if err := run(os.Args[1:]); err != nil {
+		// The one place errors are printed. Everything below returns them.
+		fmt.Fprintf(os.Stderr, "garrison: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func run(args []string) error {
+	fs := flag.NewFlagSet("garrison", flag.ContinueOnError)
+	endpoint := fs.String("docker-endpoint", "",
+		"Docker endpoint (default: npipe:////./pipe/docker_engine on Windows, unix:///var/run/docker.sock elsewhere)")
+	interval := fs.Duration("interval", fleet.DefaultInterval, "how often to re-list the fleet")
+	ascii := fs.Bool("ascii", false, "replace box drawing and block elements with plain characters")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	switch cmd := fs.Arg(0); cmd {
+	case "", "fleet":
+		return runTUI(*endpoint, *interval, *ascii)
+	case "status":
+		return runStatus(*endpoint, *interval)
+	case "version":
+		printVersion()
+		return nil
+	default:
+		return fmt.Errorf("unknown command %q: try status, version, or no argument for the dashboard", cmd)
+	}
+}
+
+// setup resolves the endpoint, wires the store to the driver, and starts the
+// writer and the poller.
+//
+// This is the only function that knows both halves of the program exist. The
+// store never imports a service and no service imports the store; they meet
+// here, which is what keeps the dependency rule true rather than aspirational.
+func setup(ctx context.Context, endpoint string, interval time.Duration) (*core.Store, *sync.WaitGroup, error) {
+	driver, err := docker.Open(endpoint, docker.Env{
+		Garrison: os.Getenv("GARRISON_DOCKER_HOST"),
+		Docker:   os.Getenv("DOCKER_HOST"),
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	resolved, _ := driver.Endpoint()
+	store := core.New(core.Options{Control: &fleet.Controller{Driver: driver}})
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		store.Run(ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		poller := &fleet.Poller{Driver: driver, Interval: interval}
+		poller.Run(ctx, store)
+	}()
+
+	store.Send(ctx, core.EngineResolved{
+		At:        time.Now(),
+		Endpoint:  resolved,
+		Transport: docker.Transport(resolved),
+	})
+
+	return store, &wg, nil
+}
+
+func runTUI(endpoint string, interval time.Duration, ascii bool) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	store, wg, err := setup(ctx, endpoint, interval)
+	if err != nil {
+		return err
+	}
+
+	tui.ColorFromEnv()
+	app := tui.NewApp(ctx, store, tui.NewTheme(ascii), fleetview.New())
+
+	_, err = tea.NewProgram(app, tea.WithAltScreen(), tea.WithContext(ctx)).Run()
+
+	// Bring the background goroutines down before returning, so a leak shows
+	// up here as a hang rather than as a process that quietly outlives its
+	// own UI.
+	stop()
+	wg.Wait()
+
+	if err != nil && !errors.Is(err, tea.ErrProgramKilled) && !errors.Is(err, context.Canceled) {
+		return err
+	}
+	return nil
+}
+
+// runStatus is the CLI peer of the fleet view: one line per server, for a
+// scheduled job or a stream-deck button. It waits for one poll and prints it.
+func runStatus(endpoint string, interval time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	store, wg, err := setup(ctx, endpoint, interval)
+	if err != nil {
+		return err
+	}
+	defer wg.Wait()
+	defer cancel()
+
+	sub := store.Subscribe()
+	for {
+		select {
+		case <-ctx.Done():
+			return errors.New("timed out waiting for the container engine")
+		case snap, ok := <-sub:
+			if !ok {
+				return errors.New("store shut down before the first poll")
+			}
+			if snap.Engine.LastOK.IsZero() && snap.Engine.Err == "" {
+				continue // nothing observed yet
+			}
+			if !snap.Engine.OK {
+				return fmt.Errorf("%s: %s", snap.Engine.Transport, snap.Engine.Err)
+			}
+			printStatus(snap)
+			return nil
+		}
+	}
+}
+
+func printStatus(snap core.Snapshot) {
+	if len(snap.Servers) == 0 {
+		fmt.Println("no containers labelled garrison.managed=1")
+		return
+	}
+	now := time.Now()
+	for _, srv := range snap.Servers {
+		line := fmt.Sprintf("%-24s %-10s %-10s %s",
+			srv.Name, srv.Game, srv.State, tui.Duration(srv.Uptime(now)))
+		if srv.Detail != "" {
+			line += "  " + srv.Detail
+		}
+		fmt.Println(line)
+	}
+}
+
+func printVersion() {
 	fmt.Printf("garrison %s  %s/%s\n", version, runtime.GOOS, runtime.GOARCH)
 
 	ids := games.IDs()
 	if len(ids) == 0 {
-		fmt.Println("\nno games registered yet.")
-		fmt.Println("next: internal/host/docker (M0), then internal/games/valheim (M1).")
+		fmt.Println("\nno games registered yet — next is internal/games/valheim (M1).")
 		return
 	}
 
@@ -36,18 +195,11 @@ func main() {
 	for _, g := range games.All() {
 		m := g.Meta()
 		fmt.Printf("  %-10s %-22s steam %s\n", m.ID, m.Name, m.SteamAppID)
-
-		caps := capabilities(g)
-		if len(caps) == 0 {
+		if caps := capabilities(g); len(caps) > 0 {
+			fmt.Printf("             %s\n", strings.Join(caps, " · "))
+		} else {
 			fmt.Println("             (no optional capabilities)")
-			continue
 		}
-		fmt.Printf("             %s\n", strings.Join(caps, " · "))
-	}
-
-	if len(os.Args) > 1 {
-		fmt.Fprintf(os.Stderr, "\nno subcommands yet: %q\n", os.Args[1:])
-		os.Exit(2)
 	}
 }
 

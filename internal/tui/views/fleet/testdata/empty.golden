@@ -1,0 +1,4 @@
+SERVERS  u start · S stop · ↑↓ move · q quit
+
+No containers labelled garrison.managed=1.
+The fleet is found by label, so anything Garrison created will appear here.

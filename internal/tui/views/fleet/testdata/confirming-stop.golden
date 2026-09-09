@@ -1,0 +1,9 @@
+SERVERS  y confirm · n cancel
+
+  NAME                 GAME         STATE        UPTIME     PORTS                NOTE
+▌ palworld-sat         palworld     ✕ crashed    —          —                    OOM killed
+  valheim-huldra       valheim      ● running    2d 11h     2456/udp
+  zomboid-main         zomboid      ● running    6d 04h     16261/udp
+  zomboid-testing      zomboid      ○ stopped    —          —                    exit 0
+
+stop palworld-sat?  y / n

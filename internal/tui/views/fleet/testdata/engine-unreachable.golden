@@ -1,0 +1,11 @@
+SERVERS  u start · S stop · ↑↓ move · q quit
+
+! npipe unreachable — cannot connect to the Docker daemon
+
+  NAME                 GAME         STATE        UPTIME     PORTS                NOTE
+▌ palworld-sat         palworld     ? unknown    —          —                    engine unreachable
+  valheim-huldra       valheim      ? unknown    —          2456/udp             engine unreachable
+  zomboid-main         zomboid      ? unknown    —          16261/udp            engine unreachable
+  zomboid-testing      zomboid      ? unknown    —          —                    engine unreachable
+
+docker unreachable: cannot connect to the Docker daemon

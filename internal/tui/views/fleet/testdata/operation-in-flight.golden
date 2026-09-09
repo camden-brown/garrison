@@ -1,0 +1,7 @@
+SERVERS  u start · S stop · ↑↓ move · q quit
+
+  NAME                 GAME         STATE        UPTIME     PORTS                NOTE
+▌ palworld-sat         palworld     ✕ crashed    —          —                    starting…
+  valheim-huldra       valheim      ● running    2d 11h     2456/udp
+  zomboid-main         zomboid      ● running    6d 04h     16261/udp
+  zomboid-testing      zomboid      ○ stopped    —          —                    exit 0

@@ -1,0 +1,275 @@
+package fleet_test
+
+import (
+	"errors"
+	"flag"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
+
+	"github.com/camden-brown/garrison/internal/core"
+	"github.com/camden-brown/garrison/internal/host"
+	"github.com/camden-brown/garrison/internal/model"
+	"github.com/camden-brown/garrison/internal/tui"
+	"github.com/camden-brown/garrison/internal/tui/views/fleet"
+)
+
+var update = flag.Bool("update", false, "rewrite the .golden files")
+
+// The colour profile is pinned for every render test. Without it the output
+// depends on the terminal the suite happens to run in, and CI and a laptop
+// disagree for reasons that have nothing to do with the code.
+func TestMain(m *testing.M) {
+	lipgloss.SetColorProfile(termenv.Ascii)
+	os.Exit(m.Run())
+}
+
+var now = time.Date(2026, 9, 9, 21, 7, 0, 0, time.UTC)
+
+func containers() []host.Container {
+	return []host.Container{
+		{
+			Instance: "zomboid-main",
+			Game:     "zomboid",
+			State:    model.StateRunning,
+			Started:  now.Add(-6*24*time.Hour - 4*time.Hour),
+			Ports:    []model.PortMap{{Container: "16261/udp", Host: 16261}},
+			Health:   model.Health{OK: true},
+		},
+		{
+			Instance: "valheim-huldra",
+			Game:     "valheim",
+			State:    model.StateRunning,
+			Started:  now.Add(-2*24*time.Hour - 11*time.Hour),
+			Ports:    []model.PortMap{{Container: "2456/udp", Host: 2456}},
+			Health:   model.Health{OK: true},
+		},
+		{
+			Instance: "palworld-sat",
+			Game:     "palworld",
+			State:    model.StateCrashed,
+			Detail:   "OOM killed",
+			ExitCode: 137,
+			Restarts: 3,
+		},
+		{
+			Instance: "zomboid-testing",
+			Game:     "zomboid",
+			State:    model.StateStopped,
+			Detail:   "exit 0",
+		},
+	}
+}
+
+func snapshot(ms ...core.Mutation) core.Snapshot {
+	s := core.Snapshot{Engine: core.Engine{Transport: "npipe"}}
+	all := append([]core.Mutation{core.FleetObserved{At: now, Containers: containers()}}, ms...)
+	return core.Reduce(s, all...)
+}
+
+func render(t *testing.T, v tui.View, snap core.Snapshot, width, height int) string {
+	t.Helper()
+	return v.Render(tui.Frame{
+		Width:  width,
+		Height: height,
+		Theme:  tui.NewTheme(false),
+		Now:    now,
+	}, snap)
+}
+
+// The only cheap thing that catches "a long server name pushes the note column
+// off screen", which is the bug class that makes a dashboard unreadable at
+// exactly the moment it matters.
+func TestGoldenRenders(t *testing.T) {
+	tests := []struct {
+		name   string
+		width  int
+		height int
+		snap   core.Snapshot
+		setup  func(tui.View, core.Snapshot) tui.View
+	}{
+		{name: "wide", width: 120, height: 34, snap: snapshot()},
+		{name: "narrow", width: 80, height: 24, snap: snapshot()},
+		{
+			name: "engine-unreachable", width: 120, height: 34,
+			snap: snapshot(core.FleetUnobservable{
+				At:  now,
+				Err: errors.New("cannot connect to the Docker daemon"),
+			}),
+		},
+		{
+			name: "empty", width: 120, height: 34,
+			snap: func() core.Snapshot {
+				return core.Reduce(
+					core.Snapshot{Engine: core.Engine{Transport: "npipe", OK: true}},
+					core.FleetObserved{At: now},
+				)
+			}(),
+		},
+		{
+			name: "operation-in-flight", width: 120, height: 34,
+			snap: snapshot(core.OperationBegan{At: now, Server: "palworld-sat", Op: core.OpStart}),
+		},
+		{
+			name: "failed-operation", width: 120, height: 34,
+			snap: snapshot(core.OperationEnded{
+				At:     now,
+				Server: "zomboid-testing",
+				Op:     core.OpStart,
+				Err:    errors.New("zomboid-testing: start: port 16261 already allocated"),
+			}),
+		},
+		{
+			name: "confirming-stop", width: 120, height: 34,
+			snap: snapshot(),
+			setup: func(v tui.View, snap core.Snapshot) tui.View {
+				next, _ := v.Update(keyPress("S"), snap)
+				return next
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var v tui.View = fleet.New()
+			if tt.setup != nil {
+				v = tt.setup(v, tt.snap)
+			}
+
+			got := render(t, v, tt.snap, tt.width, tt.height)
+			golden := filepath.Join("testdata", tt.name+".golden")
+
+			if *update {
+				if err := os.WriteFile(golden, []byte(got), 0o644); err != nil {
+					t.Fatalf("writing golden: %v", err)
+				}
+				return
+			}
+
+			want, err := os.ReadFile(golden)
+			if err != nil {
+				t.Fatalf("reading golden (run with -update to create): %v", err)
+			}
+			if got != string(want) {
+				t.Errorf("render differs from %s\n--- got ---\n%s\n--- want ---\n%s", golden, got, want)
+			}
+		})
+	}
+}
+
+// No line may exceed the terminal. A row that wraps costs two lines and pushes
+// the bottom of the fleet off the screen.
+func TestNoLineExceedsTheFrame(t *testing.T) {
+	longName := host.Container{
+		Instance: "a-server-with-a-truly-unreasonable-name-that-nobody-would-choose",
+		Game:     "some-game-with-a-long-id",
+		State:    model.StateCrashed,
+		Detail:   "exit 137: the container ran out of memory and was killed by the kernel",
+	}
+
+	snap := core.Reduce(core.Snapshot{Engine: core.Engine{OK: true}},
+		core.FleetObserved{At: now, Containers: append(containers(), longName)})
+
+	for _, width := range []int{80, 100, 120, 200} {
+		v := fleet.New()
+		out := render(t, v, snap, width, 34)
+		for i, line := range splitLines(out) {
+			if w := lipgloss.Width(line); w > width {
+				t.Errorf("width %d: line %d is %d cells:\n%s", width, i, w, line)
+			}
+		}
+	}
+}
+
+func TestStartAndStopEmitActions(t *testing.T) {
+	snap := snapshot()
+
+	t.Run("start is immediate", func(t *testing.T) {
+		v := fleet.New()
+		_, cmd := v.Update(keyPress("u"), snap)
+		if cmd == nil {
+			t.Fatal("u produced no command")
+		}
+		msg, ok := cmd().(tui.ActionMsg)
+		if !ok {
+			t.Fatalf("got %T, want tui.ActionMsg", cmd())
+		}
+		// Servers sort by name, so the cursor starts on palworld-sat.
+		if msg.Op != core.OpStart || msg.Server != "palworld-sat" {
+			t.Errorf("action = %+v", msg)
+		}
+	})
+
+	// Uppercase confirms. Pressing it must not act on its own.
+	t.Run("stop confirms first", func(t *testing.T) {
+		v := fleet.New()
+		next, cmd := v.Update(keyPress("S"), snap)
+		if cmd != nil {
+			t.Error("S acted without confirmation")
+		}
+
+		after, cmd := next.Update(keyPress("y"), snap)
+		if cmd == nil {
+			t.Fatal("y produced no command")
+		}
+		msg := cmd().(tui.ActionMsg)
+		if msg.Op != core.OpStop || msg.Server != "palworld-sat" {
+			t.Errorf("action = %+v", msg)
+		}
+		_ = after
+	})
+
+	t.Run("cancelling drops the confirmation", func(t *testing.T) {
+		v := fleet.New()
+		next, _ := v.Update(keyPress("S"), snap)
+		after, cmd := next.Update(keyPress("n"), snap)
+		if cmd != nil {
+			t.Error("n produced a command")
+		}
+		if got := render(t, after, snap, 120, 34); contains(got, "y / n") {
+			t.Error("the confirmation is still on screen after cancelling")
+		}
+	})
+}
+
+func TestCursorStaysInRangeWhenTheFleetShrinks(t *testing.T) {
+	full := snapshot()
+
+	var v tui.View = fleet.New()
+	for i := 0; i < 10; i++ {
+		v, _ = v.Update(keyPress("j"), full)
+	}
+
+	// Every server but one disappears between polls.
+	shrunk := core.Reduce(core.Snapshot{Engine: core.Engine{OK: true}},
+		core.FleetObserved{At: now, Containers: containers()[:1]})
+
+	v, cmd := v.Update(keyPress("u"), shrunk)
+	if cmd == nil {
+		t.Fatal("no command after the fleet shrank — the cursor is out of range")
+	}
+	if msg := cmd().(tui.ActionMsg); msg.Server != "zomboid-main" {
+		t.Errorf("acted on %q, want the only remaining server", msg.Server)
+	}
+	_ = v
+}
+
+// --- helpers ---
+
+func keyPress(s string) tea.KeyMsg {
+	if len(s) == 1 {
+		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
+	}
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
+}
+
+func splitLines(s string) []string { return strings.Split(s, "\n") }
+
+func contains(haystack, needle string) bool { return strings.Contains(haystack, needle) }

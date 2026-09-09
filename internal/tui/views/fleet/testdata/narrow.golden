@@ -1,0 +1,7 @@
+SERVERS  u start · S stop · ↑↓ move · q quit
+
+  NAME             GAME       STATE        UPTIME     NOTE
+▌ palworld-sat     palworld   ✕ crashed    —          OOM killed
+  valheim-huldra   valheim    ● running    2d 11h
+  zomboid-main     zomboid    ● running    6d 04h
+  zomboid-testing  zomboid    ○ stopped    —          exit 0
