@@ -128,8 +128,13 @@ garrison restart zomboid-main --drain 15m
 garrison backup zomboid-main --keep 14
 ```
 
-As of M0 the implemented commands are `garrison` (the Fleet view), `garrison
-status` and `garrison version`; the rest arrive with the task engine at M2.
+The implemented commands are `garrison` (the TUI), `garrison status`,
+`garrison version`, and `start`, `stop`, `restart`, `backup` and `update`,
+each taking a server name. A subcommand submits the same task the key press
+does and **waits for it**, printing each step and exiting non-zero if it
+fails — a scheduled job that returned as soon as the task was queued would
+tell Task Scheduler a restart succeeded before the server had stopped.
+`--drain` is not implemented; drain itself is not.
 
 The Docker endpoint is resolved from, in order: `--docker-endpoint`,
 `GARRISON_DOCKER_HOST`, `DOCKER_HOST`, then the per-OS default
@@ -155,9 +160,10 @@ same core; neither wraps the other.
 Server files are human-readable TOML you can edit with the tool closed:
 
 ```toml
-game  = "zomboid"
-image = "renegademaster/zomboid-dedicated-server:1.6.1"
-data  = 'D:\gameservers\zomboid-main\data'
+game    = "zomboid"
+image   = "renegademaster/zomboid-dedicated-server:1.6.1"
+data    = 'D:\gameservers\zomboid-main\data'
+address = "myserver.example.org"   # what players type; only used by the share key
 
 [resources]
 memory = "12GiB"
@@ -204,6 +210,7 @@ the same thing in every view or it does not exist. Lowercase is safe;
 | <kbd>u</kbd> / <kbd>S</kbd> | Start / stop |
 | <kbd>r</kbd> / <kbd>U</kbd> | Restart (offers a drain) / update |
 | <kbd>b</kbd> / <kbd>B</kbd> | Backup now / restore |
+| <kbd>y</kbd> | Copy the server's join details — address, password, world — to the clipboard |
 | <kbd>n</kbd> / <kbd>X</kbd> | New server wizard / delete server |
 | <kbd>F</kbd> | Ambient mode |
 | <kbd>Space</kbd> | Freeze auto-refresh and log follow |
@@ -308,7 +315,7 @@ fake encodes match the thing it stands in for.
 | :-: | --- | --- |
 | **M0** ✅ | Driver and fleet list | `host.Driver` over the named pipe, the store, start/stop. Named pipe verified against Docker Desktop; the render loop still wants an hour on Windows hardware. |
 | **M1** ✅ | Live truth | Stats and log streaming, the dashboard with sparklines, Valheim behind the `Game` interface. |
-| **M2** ✅ | Task engine | Lanes, steps, compensation, SQLite persistence, the Tasks view. Restart, backup, update, and the scheduler. |
+| **M2** ✅ | Task engine | Lanes, steps, compensation, SQLite persistence, the Tasks view. Restart, backup, update, restore and the scheduler, plus the Console and Backups screens over them. |
 | **M3** ◐ | Second game | The settings form and apply are built against Valheim. Zomboid — two config syntaxes, RCON, Workshop mods with load order — is next. |
 | **M4** | Players and mods | Session history, occupancy, the Mods view. Palworld as the third game. |
 | **M5** | Provisioning and polish | The wizard, restore, ambient mode, command palette, CLI subcommands, 80-column layouts. |

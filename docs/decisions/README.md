@@ -21,3 +21,6 @@ colour choices are meant to be argued with and live in
 | [0005](0005-arch-test-parses-sources.md) | The dependency rule is enforced by parsing sources, not `go list` | Accepted |
 | [0006](0006-valheim-first.md) | Valheim is the first game implemented | Accepted |
 | [0007](0007-services-and-store-meet-in-cmd.md) | Services and the store meet through interfaces, wired in `cmd` | Accepted |
+| [0008](0008-game-vocabularies-come-from-the-game.md) | A plugin's option lists are extracted from the game, not transcribed | Accepted |
+| [0009](0009-secrets-stay-in-the-config-file-for-now.md) | Secrets stay in the config file, and the form will not type one | Accepted |
+| [0010](0010-the-console-ring-shares-its-storage.md) | The console ring shares storage between snapshots | Accepted |

@@ -33,6 +33,7 @@ import (
 	"github.com/camden-brown/garrison/internal/services/fleet"
 	"github.com/camden-brown/garrison/internal/services/logs"
 	"github.com/camden-brown/garrison/internal/services/metrics"
+	"github.com/camden-brown/garrison/internal/services/players"
 	"github.com/camden-brown/garrison/internal/services/scheduler"
 	sqlitestore "github.com/camden-brown/garrison/internal/store"
 	"github.com/camden-brown/garrison/internal/tasks"
@@ -62,6 +63,7 @@ func run(args []string) error {
 		"Docker endpoint (default: npipe:////./pipe/docker_engine on Windows, unix:///var/run/docker.sock elsewhere)")
 	interval := fs.Duration("interval", fleet.DefaultInterval, "how often to re-list the fleet")
 	ascii := fs.Bool("ascii", false, "replace box drawing and block elements with plain characters")
+	timeout := fs.Duration("timeout", 10*time.Minute, "how long a subcommand waits for its task before giving up")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -75,7 +77,9 @@ func run(args []string) error {
 		printVersion()
 		return nil
 	default:
-		return fmt.Errorf("unknown command %q: try status, version, or no argument for the dashboard", cmd)
+		// Every action in the TUI is also a subcommand. runVerb reports an
+		// unknown one, so there is one place that knows the whole set.
+		return runVerb(cmd, *confDir, *endpoint, *interval, *timeout, fs.Args()[1:])
 	}
 }
 
@@ -187,6 +191,35 @@ func setup(ctx context.Context, confDir, endpoint string, interval time.Duration
 		poller.Run(ctx, observer)
 	})
 
+	// The archive poller is what makes the Backups screen a list rather than
+	// a promise. It is separate from the fleet poll because it reads the
+	// filesystem rather than the engine, and because backups change on a
+	// scale of minutes rather than seconds.
+	run(func() {
+		(&backup.Poller{Interval: backup.DefaultInterval, Dirs: arch}).Run(ctx, store)
+	})
+
+	// Session history needs somewhere durable, so it runs only when the
+	// database opened. Without it the Players view shows who is on now and
+	// says the history is not being kept, which is the same failure the
+	// notice above already reported.
+	if db != nil {
+		if closed, err := db.CloseStaleSessions(time.Now()); err == nil && closed > 0 {
+			store.Send(ctx, core.NoticeRaised{
+				At: time.Now(), Level: core.LevelInfo,
+				Text: fmt.Sprintf("closed %d session(s) left open by a previous run", closed),
+			})
+		}
+		run(func() {
+			(&players.Tracker{
+				Interval: players.DefaultInterval,
+				Window:   players.DefaultWindow,
+				Fleet:    rosters{store: store},
+				Store:    db,
+			}).Run(ctx, store)
+		})
+	}
+
 	// The scheduler is started last and seeded first, so opening Garrison
 	// at ten in the morning does not immediately run the restart that was
 	// due at four.
@@ -222,6 +255,10 @@ func housekeep(ctx context.Context, db *sqlitestore.DB) {
 		metrics = 30 * 24 * time.Hour // DESIGN §8: the cold tier is 30 days
 		events  = 90 * 24 * time.Hour // DESIGN §8: events are kept 90 days
 		history = 90 * 24 * time.Hour
+
+		// Sessions outlive the Players view's seven-day window so a longer
+		// one can be asked for later without the data already being gone.
+		sessions = 90 * 24 * time.Hour
 	)
 
 	prune := func() {
@@ -229,6 +266,7 @@ func housekeep(ctx context.Context, db *sqlitestore.DB) {
 		_, _ = db.Journal().Prune(now.Add(-history))
 		_, _ = db.PruneMetrics(now.Add(-metrics))
 		_, _ = db.PruneEvents(now.Add(-events))
+		_, _ = db.PruneSessions(now.Add(-sessions))
 	}
 	prune()
 
@@ -293,6 +331,59 @@ func (s *serverArchive) Prune(keep int) ([]string, error) {
 		return nil, nil
 	}
 	return backup.Store{Dir: dir}.Prune(keep)
+}
+
+// Restore unpacks an archive over the server's data directory. The service
+// refuses to write outside dst, which is what makes an archive from anywhere
+// safe to accept.
+func (s *serverArchive) Restore(ctx context.Context, archive, dst string) error {
+	dir := s.dir()
+	if dir == "" {
+		return fmt.Errorf("%s: no data directory configured, so there is nowhere to restore to", s.server)
+	}
+	return backup.Store{Dir: dir}.Restore(ctx, archive, dst)
+}
+
+// BackupDirs answers the archive poller: every configured server, and where
+// its archives live.
+//
+// This is the same directory serverArchive.dir computes and for the same
+// reason — it is derived from the configured data directory, which only the
+// store knows. Both sides of that live here because cmd is where the store and
+// the services are allowed to meet (ADR 0007).
+func (a *archives) BackupDirs() map[string]string {
+	if a.store == nil {
+		return nil
+	}
+	snap := a.store.Snapshot()
+	out := make(map[string]string, len(snap.Servers))
+	for _, srv := range snap.Servers {
+		dir := (&serverArchive{store: a.store, server: srv.Name}).dir()
+		if dir != "" {
+			out[srv.Name] = dir
+		}
+	}
+	return out
+}
+
+// rosters answers the player tracker: who is connected to each server right
+// now, as the store currently understands it.
+//
+// The tracker diffs this rather than reading log events, so it works the same
+// for a game whose roster is inferred from a log and one that will answer over
+// RCON. cmd supplies it because a service never imports core (ADR 0007).
+type rosters struct{ store *core.Store }
+
+func (r rosters) Rosters() map[string][]model.Player {
+	if r.store == nil {
+		return nil
+	}
+	snap := r.store.Snapshot()
+	out := make(map[string][]model.Player, len(snap.Servers))
+	for _, srv := range snap.Servers {
+		out[srv.Name] = srv.Players
+	}
+	return out
 }
 
 // schedule is the scheduler's window onto the store plus the configured jobs.

@@ -63,9 +63,28 @@ summary for a scheduled job.
   a restore that refuses to write outside its destination.
 - `internal/services/scheduler` — cron, with the two policies that decide
   what a due job does when people are playing.
+- `internal/services/backup` also polls the archive directories, so the
+  Backups screen lists what is on disk rather than only what Garrison made.
+- `internal/services/players` — diffs the roster on a timer and writes
+  sessions to SQLite, which is what the Players view's occupancy chart is
+  computed from. It diffs a roster rather than reading join/leave events, so a
+  game that answers over RCON later changes nothing here.
 - `internal/tui` — the shell, the rail, the theme, the `View` contract, and
-  `comp` (panel, tile, sparkline, text). Views: fleet, dashboard, settings,
-  tasks, plus stubs that say which milestone replaces them.
+  `comp` (panel, tile, sparkline, text, input, filter, log). All eight views
+  are built: fleet, dashboard, console, players, mods, settings, tasks,
+  backups. The shell also owns the things that are not screens — the ":"
+  command line, ctrl+P palette, "n" provisioner, "F" ambient mode, "y" share
+  and the "?" help overlay, which is generated from the View contract's Keys
+  rather than written out.
+
+  Sharing copies over **OSC 52** (`termenv.Copy`, already a direct dependency)
+  and shows the same text on screen, because a terminal is free to ignore the
+  escape and a copy whose only evidence is somebody else's paste fails
+  silently. The join address comes from `Instance.Address` — Garrison cannot
+  derive it, since the DNS name and the router forward are both outside what
+  it can see.
+  `comp.Input` is the only text editor: the value it edits lives in the store
+  and only the caret is the view's, so a resize cannot lose what was typed.
 
 **The named pipe is verified** (2026-09-09): a `GOOS=windows` build reached
 Docker Desktop 29.7.2 over `npipe:////./pipe/docker_engine` with no flags and
@@ -100,22 +119,46 @@ Debts still outstanding, all deliberate and all noted in the code:
    one, because Valheim's log never links the two. It mis-pairs two players
    who finish loading in a different order than they connected. A game that
    can answer properly implements `games.Rostered` and skips this entirely.
-2. `Server.Console` is a 200-line tail, not the 16k-line ring DESIGN
-   describes for the Console screen. Snapshots copy on write and the
-   dashboard needs twenty lines; the full ring lands with the view that
-   needs it.
-3. The bind-mount measurement from `D:\` that the design asks for at M0 has
-   not been taken.
-4. There is no Backups *screen* yet. Archives are taken, pruned and
-   restorable, but listing them needs a poller feeding the snapshot, and
-   restoring over a live world is one of the three actions that must ask for
-   the server's name typed out.
-5. Drain is not implemented. `Restart` stops and starts; it does not warn
+2. The console has no command *input*. `games.Commandable` and `games.Conn`
+   are both declared and neither has an implementation, so the Console view
+   asserts the capability and explains its absence rather than offering an
+   input that would drop what you typed. The transport arrives with
+   Zomboid's RCON, and lights the input up without the view changing.
+3. `model.Mount` cannot express a Docker named volume — only a host path. The
+   measurement in "Platform facts" says a bind mount from a Windows drive is
+   ~32× slower than a volume for small-file writes, so this is now a number
+   rather than a suspicion, and it is the strongest argument for giving Mount
+   a volume form.
+4. Restore has no *scheduled* form. `tasks.Restore` and the Backups screen
+   exist, but a restore is always something a person asked for by typing the
+   server's name — there is no policy that would run one unattended, and no
+   obvious one worth inventing.
+5. The Mods screen lists what is configured and cannot change it. `Moddable`
+   is designed around mods a server downloads from its own config (Zomboid's
+   Workshop ids), and Valheim's BepInEx plugins are files with no such
+   mechanism — so Valheim implements no `Moddable` and the screen says so.
+   Whether the interface needs an install path is a question for the first
+   game that actually has one; guessing now is what ADR 0006 warns against.
+6. Drain is not implemented. `Restart` stops and starts; it does not warn
    players at 15m, 5m and 1m first, because Valheim has no channel to warn
    them on. It arrives with Zomboid's RCON.
 
 Closed since M1: start/stop are tasks, the stop record is durable in SQLite,
-and the cold metric tier has somewhere to live.
+and the cold metric tier has somewhere to live. Closed since M2: the console
+is a real 16k ring ([ADR 0010](docs/decisions/0010-the-console-ring-shares-its-storage.md))
+with a Console screen over it, the settings form can edit text, and backups
+have a screen with a restore behind a typed confirmation. Closed since then:
+Players and Mods, the "/" filter, the ":" command line, the ctrl+P palette,
+ambient mode, the provisioner, and start/stop/restart/backup/update as
+subcommands that wait for their task and exit on its result.
+
+**Restore is the one destructive path that undoes itself.** `tasks.Restore`
+stops the server, archives the world it is about to replace, unpacks the chosen
+archive, and starts again — and that safety archive is the declared
+compensation for the unpack, so a truncated archive or a server that will not
+come back leaves the previous world in place. The typed prompt in the view
+guards against meaning the wrong thing; the task guards against everything
+else.
 
 `fleet.DefaultStopGrace` is 60s and nothing overrides it yet, so stopping a
 container that ignores SIGTERM takes a full minute before the kill. From M1
@@ -178,8 +221,20 @@ doing it at M3.
   endpoint configurable.
 - Under the WSL2 backend, container memory `usage` includes page cache. Report
   `usage - stats.inactive_file` (cgroup v2) or every server looks near OOM.
-- Bind mounts from `D:\` cross the WSL2 filesystem boundary and are slow for
-  save-heavy games. Measure at M0, not M4.
+- **Bind mounts from a Windows drive cross the WSL2 filesystem boundary and
+  are slow. Measured 2026-09-09**, Docker Desktop 29.7.2, `C:` vs. a Docker
+  named volume, three runs, inside the container:
+
+  | | bind mount from `C:` | named volume | ratio |
+  | --- | ---: | ---: | ---: |
+  | 256 MiB sequential write | ~1.90 s | ~0.50 s | **3.8×** |
+  | 2000 small files | ~4.9 s | ~0.15 s | **~32×** |
+
+  Sequential throughput is merely poor; the small-file case is the one that
+  matters, because that is the shape of a chunked world save. A game that
+  writes its save as many small files across a bind mount pays thirty times
+  over. `model.Mount` speaks host paths only, so a named volume is not
+  currently expressible — that is the gap this number argues for closing.
 - Sparklines use block elements (U+2580–U+259F), never Braille — Braille
   coverage in monospace fonts is unreliable and a fallback glyph shears the
   cell grid. Run fixed-width strings through `go-runewidth` before truncating.
