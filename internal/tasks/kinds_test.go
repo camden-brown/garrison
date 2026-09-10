@@ -277,10 +277,31 @@ func TestStoppingSomethingAlreadyDownSucceeds(t *testing.T) {
 
 // stubArchive records what was asked of it.
 type stubArchive struct {
-	mu      sync.Mutex
-	created int
-	pruned  int
-	err     error
+	mu       sync.Mutex
+	created  int
+	pruned   int
+	restored []string
+	err      error
+	// restoreErr fails the restore itself, so a test can drive the
+	// compensation that puts the previous world back.
+	restoreErr error
+}
+
+func (s *stubArchive) Restore(_ context.Context, archive, _ string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.restoreErr != nil {
+		return s.restoreErr
+	}
+	s.restored = append(s.restored, archive)
+	return nil
+}
+
+// restores is what was unpacked, in order.
+func (s *stubArchive) restores() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.restored...)
 }
 
 func (s *stubArchive) Create(context.Context, string, time.Time) (string, int64, error) {
@@ -405,4 +426,78 @@ func indexOf(list []string, want string) int {
 		}
 	}
 	return -1
+}
+
+// A restore replaces a world, so the world it replaces is archived first and
+// that archive is what the compensation puts back.
+func TestRestoreArchivesTheWorldItReplaces(t *testing.T) {
+	d := fake.New(healthy("a"))
+	d.SetClock(func() time.Time { return at })
+	res := driverResolver{
+		inst: model.Instance{Name: "a", Game: "valheim", Data: "/data"},
+		game: valheimGame{},
+	}
+	arch := &stubArchive{}
+
+	p := runTask(t, d, res, tasks.Restore("t1", "a", tasks.TriggerManual, arch, "/backups/old.tar.zst"))
+	if p.State != tasks.StateDone {
+		t.Fatalf("state = %v (%s), want done", p.State, p.Err)
+	}
+
+	if created, _ := arch.counts(); created != 1 {
+		t.Errorf("took %d safety archives, want exactly 1", created)
+	}
+	if got := arch.restores(); len(got) != 1 || got[0] != "/backups/old.tar.zst" {
+		t.Errorf("restored %v, want the archive that was asked for", got)
+	}
+}
+
+// The case the whole design is for: the restore itself fails, and the world
+// that was there before comes back.
+func TestAFailedRestorePutsTheOldWorldBack(t *testing.T) {
+	d := fake.New(healthy("a"))
+	d.SetClock(func() time.Time { return at })
+	res := driverResolver{
+		inst: model.Instance{Name: "a", Game: "valheim", Data: "/data"},
+		game: valheimGame{},
+	}
+	arch := &stubArchive{restoreErr: errors.New("archive is truncated")}
+
+	p := runTask(t, d, res, tasks.Restore("t1", "a", tasks.TriggerManual, arch, "/backups/bad.tar.zst"))
+	if p.State != tasks.StateRolledBack {
+		t.Fatalf("state = %v (%s), want rolled back", p.State, p.Err)
+	}
+	if !strings.Contains(p.Err, "truncated") {
+		t.Errorf("error = %q, want the cause", p.Err)
+	}
+
+	// The safety archive was taken even though the restore never landed, so
+	// there is something to go back to.
+	if created, _ := arch.counts(); created != 1 {
+		t.Errorf("took %d safety archives, want 1 before touching the world", created)
+	}
+
+	// And the server is running again rather than left down.
+	var restarted bool
+	for _, c := range d.Calls() {
+		if strings.HasPrefix(c, "Start(") {
+			restarted = true
+		}
+	}
+	if !restarted {
+		t.Error("the server was left down after a failed restore")
+	}
+}
+
+func TestRestoreWithNoArchiveNamedFails(t *testing.T) {
+	d := fake.New(healthy("a"))
+	res := driverResolver{
+		inst: model.Instance{Name: "a", Game: "valheim", Data: "/data"},
+		game: valheimGame{},
+	}
+
+	p := runTask(t, d, res, tasks.Restore("t1", "a", tasks.TriggerManual, &stubArchive{}, ""))
+	if p.State == tasks.StateDone {
+		t.Fatal("a restore with no archive named reported success")
+	}
 }

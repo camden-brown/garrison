@@ -20,6 +20,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/camden-brown/garrison/internal/model"
+
 	"github.com/klauspost/compress/zstd"
 )
 
@@ -27,13 +29,10 @@ import (
 // a search for it finds every place that cares.
 const Extension = ".tar.zst"
 
-// Archive is one backup on disk.
-type Archive struct {
-	Path  string
-	Name  string
-	Taken time.Time
-	Bytes int64
-}
+// Archive is one backup on disk. It is model.Archive under another name: the
+// snapshot carries these to the Backups view, and the model package is the
+// only one both this service and the store are allowed to share.
+type Archive = model.Archive
 
 // Store is a server's backup directory.
 type Store struct{ Dir string }

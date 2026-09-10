@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/camden-brown/garrison/internal/model"
@@ -68,11 +69,93 @@ func ApplyConfig(id, server string, trigger Trigger, next model.Instance, save S
 	return &Task{ID: id, Server: server, Kind: KindApplyConfig, Trigger: trigger, Steps: steps}
 }
 
-// Archiver takes and prunes backups. Declared here so this package does not
-// import internal/services/backup.
+// Archiver takes, prunes and puts back backups. Declared here so this package
+// does not import internal/services/backup.
 type Archiver interface {
 	Create(ctx context.Context, src string, at time.Time) (path string, bytes int64, err error)
 	Prune(keep int) ([]string, error)
+	// Restore unpacks an archive over dst, replacing what is there.
+	Restore(ctx context.Context, archive, dst string) error
+}
+
+// Restore replaces a server's world with an archive.
+//
+// This is the most destructive thing Garrison does, and the shape of the task
+// is the argument for why it is safe to offer at all. The world being
+// overwritten is archived first, and that archive is the compensation for the
+// step that overwrites it: if the restore fails halfway, or the server will
+// not come back up afterwards, the engine unwinds and puts back exactly what
+// was there. A restore that cannot be undone is a restore nobody should run
+// against a world they care about, which is most of them.
+//
+// The stop comes first because unpacking a world under a running server
+// produces a corrupt one, and the game would keep writing over what was
+// restored.
+func Restore(id, server string, trigger Trigger, archive Archiver, from string) *Task {
+	return &Task{
+		ID: id, Server: server, Kind: KindRestore, Trigger: trigger,
+		Steps: []Step{
+			stopStep(),
+			safetySnapshotStep(archive),
+			restoreStep(archive, from),
+			startStep(),
+			healthStep(),
+		},
+	}
+}
+
+// safetySnapshotStep archives the world that is about to be replaced.
+//
+// It is not the same as the Backup task's snapshot: it is never pruned, it is
+// taken with the server already stopped so it is consistent rather than hot,
+// and its only purpose is to be the thing restoreStep undoes to.
+func safetySnapshotStep(archive Archiver) Step {
+	return Step{
+		Name: "archive the world being replaced",
+		Est:  30 * time.Second,
+		Run: func(ctx context.Context, s *StepCtx) error {
+			if s.Instance.Data == "" {
+				return errors.New("no data directory configured, so there is nothing to archive")
+			}
+			path, size, err := archive.Create(ctx, s.Instance.Data, time.Now())
+			if err != nil {
+				return fmt.Errorf("archiving the current world before replacing it: %w", err)
+			}
+			s.Set("safety", path)
+			s.Say(fmt.Sprintf("kept %s of the world being replaced", humanBytes(size)))
+			return nil
+		},
+	}
+}
+
+func restoreStep(archive Archiver, from string) Step {
+	return Step{
+		Name: "restore archive",
+		Est:  60 * time.Second,
+		Run: func(ctx context.Context, s *StepCtx) error {
+			if from == "" {
+				return errors.New("no archive named to restore from")
+			}
+			if s.Instance.Data == "" {
+				return errors.New("no data directory configured, so there is nowhere to restore to")
+			}
+			if err := archive.Restore(ctx, from, s.Instance.Data); err != nil {
+				return err
+			}
+			s.Say("restored " + filepath.Base(from))
+			return nil
+		},
+		Undo: func(ctx context.Context, s *StepCtx) error {
+			safety, _ := s.String("safety")
+			if safety == "" {
+				// The one step where a silent no-op would be a lie. If the
+				// safety archive is missing the world is whatever the failed
+				// restore left, and saying so is the only useful thing left.
+				return errors.New("no safety archive was taken, so the previous world cannot be put back")
+			}
+			return archive.Restore(ctx, safety, s.Instance.Data)
+		},
+	}
 }
 
 // Backup archives a server's data directory.
