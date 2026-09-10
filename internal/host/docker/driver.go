@@ -389,10 +389,23 @@ func envList(env map[string]string) []string {
 	return out
 }
 
+// binds converts the plan's mounts to Docker's bind syntax.
+//
+// A named volume and a host path use the same "source:target" form — Docker
+// tells them apart by whether the source looks like a path — so a volume that
+// is named like a path would be created as a directory instead. Volume names
+// are validated where they are configured for that reason.
 func binds(mounts []model.Mount) []string {
 	out := make([]string, 0, len(mounts))
 	for _, m := range mounts {
-		bind := m.Host + ":" + m.Container
+		source := m.Source()
+		if source == "" {
+			// A mount with neither a path nor a volume is not a mount. It
+			// is dropped rather than passed on as ":/config", which Docker
+			// reports as an unhelpfully generic invalid-spec error.
+			continue
+		}
+		bind := source + ":" + m.Container
 		if m.ReadOnly {
 			bind += ":ro"
 		}

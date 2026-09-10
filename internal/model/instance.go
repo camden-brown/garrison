@@ -9,7 +9,14 @@ type Instance struct {
 	Name  string // "zomboid-main" — unique, and the container suffix
 	Game  string // a games.Meta.ID
 	Image string // pinned image reference
-	Data  string // host path bind-mounted as the data volume
+	// Data is a host path bind-mounted as the data volume, and Volume is a
+	// runtime-managed volume used instead. Exactly one is set.
+	//
+	// Volume exists because on Windows the two are not equivalent: a bind
+	// mount from a Windows drive is ~32x slower than a volume for many
+	// small files, which is what a chunked world save is. See model.Mount.
+	Data   string
+	Volume string
 
 	// Address is how players reach this server from outside: a hostname or
 	// a public IP, without a port.
@@ -55,3 +62,19 @@ type Schedule struct {
 	Drain  time.Duration // player warning window before a restart
 	Policy string        // "skip-if-occupied" | "wait-for-empty" | "always"
 }
+
+// Storage is the mount an instance's world lives on, whichever form it takes.
+//
+// Plugins build their Plan from this rather than from Data directly, so a
+// server switched to a volume needs no per-game change. A volume beats a path
+// when both are somehow set, because it is the more deliberate choice — a
+// path can be left over from before the switch.
+func (i Instance) Storage(container string) Mount {
+	if i.Volume != "" {
+		return Mount{Volume: i.Volume, Container: container}
+	}
+	return Mount{Host: i.Data, Container: container}
+}
+
+// HasStorage reports whether this instance has anywhere to keep a world.
+func (i Instance) HasStorage() bool { return i.Volume != "" || i.Data != "" }

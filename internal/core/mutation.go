@@ -343,10 +343,26 @@ func rosterApply(srv *Server, ev model.Event) {
 		if ev.Player == "" {
 			return
 		}
+		// Valheim's log never links a character name to the connection it
+		// arrived on: the handshake carries a Steam id and no name, the
+		// ZDOID line carries a name and no id. Verified against a captured
+		// session — see internal/games/valheim/testdata/session.log.
+		//
+		// So the id is claimed only when there is exactly one connection it
+		// could belong to. With two people loading at once the honest
+		// answer is "we do not know", and an empty id is exactly that: the
+		// session tracker keys on the name instead, which is right per
+		// player. Guessing was worse than it looked — the tracker keys on
+		// the Steam id where there is one, so one wrong pairing merges two
+		// people's session histories under a single identity and the
+		// occupancy chart is quietly wrong about who was on.
+		//
+		// A game that can answer properly implements games.Rostered and
+		// never reaches this at all, which Zomboid does.
 		steamID := ev.SteamID
-		if steamID == "" && len(srv.connecting) > 0 {
+		if steamID == "" && len(srv.connecting) == 1 {
 			steamID = srv.connecting[0]
-			srv.connecting = append([]string(nil), srv.connecting[1:]...)
+			srv.connecting = nil
 		}
 		srv.Players = withPlayer(srv.Players, model.Player{
 			Name:    ev.Player,

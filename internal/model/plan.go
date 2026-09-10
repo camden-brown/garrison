@@ -49,12 +49,46 @@ func (p Plan) HasRCON() bool {
 	return p.RCON.ContainerPort != "" && p.RCON.Password != ""
 }
 
-// Mount is a bind mount from the host into the container.
+// Mount is storage attached to a container: either a path on the host or a
+// volume the runtime manages.
+//
+// Both forms exist because on Windows they are not close to equivalent.
+// Measured on Docker Desktop 29.7.2 (see CLAUDE.md, "Platform facts"), a bind
+// mount from a Windows drive is about four times slower than a named volume
+// for sequential writes and **about thirty times slower for many small
+// files** — which is the shape of a chunked world save. A game that writes
+// its save as hundreds of small files pays that every autosave.
+//
+// A bind mount is still the right default: the world is visible in Explorer,
+// backed up by whatever already backs up that drive, and readable without
+// Docker. A volume is the choice for a save-heavy game where that trade is
+// worth making, and the cost is that the files live inside the runtime.
 type Mount struct {
-	Host      string
+	// Host is a path on the host. Empty when Volume is set.
+	Host string
+
+	// Volume is a runtime-managed volume name. Empty when Host is set.
+	//
+	// Garrison never invents one: the wizard proposes a name and the
+	// server's TOML records it, so a volume is as explicit as a path and a
+	// world cannot end up somewhere nobody chose.
+	Volume string
+
 	Container string
 	ReadOnly  bool
 }
+
+// Source is what the runtime should attach, whichever form this mount takes.
+func (m Mount) Source() string {
+	if m.Volume != "" {
+		return m.Volume
+	}
+	return m.Host
+}
+
+// IsVolume reports whether this mount is a runtime-managed volume rather than
+// a host path.
+func (m Mount) IsVolume() bool { return m.Volume != "" }
 
 // HealthCheck is a container-level healthcheck.
 type HealthCheck struct {

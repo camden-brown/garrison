@@ -731,3 +731,45 @@ func TestAPlainRestartHasNoDrainStep(t *testing.T) {
 		t.Errorf("a drained restart has %d steps, a plain one %d", len(drained.Steps), len(plain.Steps))
 	}
 }
+
+// A volume-backed server has no host directory to tar. A backup task that
+// reported success without writing anything is how somebody discovers they
+// have no backups on the day they need one.
+func TestBackupRefusesAVolumeRatherThanSucceedingQuietly(t *testing.T) {
+	d := fake.New(healthy("a"))
+	res := driverResolver{
+		inst: model.Instance{Name: "a", Game: "valheim", Volume: "garrison-a-world"},
+		game: valheimGame{},
+	}
+	arch := &stubArchive{}
+
+	p := runTask(t, d, res, tasks.Backup("t1", "a", tasks.TriggerManual, arch, 14))
+	if p.State == tasks.StateDone {
+		t.Fatal("a backup of a volume reported success")
+	}
+	if !strings.Contains(p.Err, "volume") {
+		t.Errorf("error = %q, want it to name the reason", p.Err)
+	}
+	if created, _ := arch.counts(); created != 0 {
+		t.Errorf("the archiver was called %d times for a volume", created)
+	}
+}
+
+// A restore whose safety archive cannot be taken is a restore with no way
+// back, which is the one thing tasks.Restore exists to guarantee.
+func TestRestoreRefusesAVolume(t *testing.T) {
+	d := fake.New(healthy("a"))
+	res := driverResolver{
+		inst: model.Instance{Name: "a", Game: "valheim", Volume: "garrison-a-world"},
+		game: valheimGame{},
+	}
+	arch := &stubArchive{}
+
+	p := runTask(t, d, res, tasks.Restore("t1", "a", tasks.TriggerManual, arch, "/backups/old.tar.zst"))
+	if p.State == tasks.StateDone {
+		t.Fatal("a restore onto a volume reported success")
+	}
+	if got := arch.restores(); len(got) != 0 {
+		t.Errorf("the archive was unpacked anyway: %v", got)
+	}
+}

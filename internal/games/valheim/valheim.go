@@ -110,7 +110,7 @@ func (Game) Plan(inst model.Instance) (model.Plan, error) {
 		Image:  image,
 		Env:    env,
 		Ports:  ports,
-		Mounts: []model.Mount{{Host: inst.Data, Container: "/config"}},
+		Mounts: []model.Mount{inst.Storage("/config")},
 		Resources: model.Resources{
 			Memory: inst.Resources.Memory,
 			CPUs:   inst.Resources.CPUs,

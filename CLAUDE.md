@@ -162,17 +162,25 @@ before concluding one is empty.
 
 Debts still outstanding, all deliberate and all noted in the code:
 
-1. The roster binds a name to a connection by claiming the oldest unnamed
-   one, because Valheim's log never links the two. It mis-pairs two players
-   who finish loading in a different order than they connected. **This is
-   now Valheim's problem alone**: Zomboid implements `games.Rostered` and the
-   roster poller asks it instead, so the inference runs only for games that
-   cannot be asked.
-3. `model.Mount` cannot express a Docker named volume — only a host path. The
-   measurement in "Platform facts" says a bind mount from a Windows drive is
-   ~32× slower than a volume for small-file writes, so this is now a number
-   rather than a suspicion, and it is the strongest argument for giving Mount
-   a volume form.
+1. Valheim's log cannot link a character name to a connection, so two people
+   loading at once get **no** Steam id rather than a guessed one. Verified
+   against a captured session: the handshake line carries an id and no name,
+   the ZDOID line a name and no id. The old heuristic claimed the oldest
+   pending connection, which was worse than it looked — the session tracker
+   keys on the Steam id where there is one, so a single wrong pairing merged
+   two people's session histories and quietly falsified the occupancy chart.
+   An empty id falls back to the name, which is right per player. A game that
+   can answer implements `games.Rostered` and never reaches this; Zomboid
+   does.
+3. **A volume-backed server cannot be archived.** `model.Mount` now expresses
+   a Docker named volume and a server chooses with `volume =` in its TOML
+   instead of `data =`, which is what the ~32× small-file measurement argued
+   for. What is missing is the other half: `internal/services/backup` tars a
+   directory, and a volume has none. Both the backup task and the restore's
+   safety snapshot refuse loudly rather than reporting a success that wrote
+   nothing — a backup task that lies is how somebody finds out they have no
+   backups on the day they need one. Fixing it means a driver capability that
+   runs a helper container to stream a tar out of the volume.
 4. Restore and delete have no *scheduled* form, deliberately. Both are things
    a person asked for by typing a server's name; there is no policy that would
    run either unattended and none worth inventing.
@@ -286,8 +294,10 @@ render loop needs an hour on Windows hardware that no test here can supply.
   Sequential throughput is merely poor; the small-file case is the one that
   matters, because that is the shape of a chunked world save. A game that
   writes its save as many small files across a bind mount pays thirty times
-  over. `model.Mount` speaks host paths only, so a named volume is not
-  currently expressible — that is the gap this number argues for closing.
+  over. A server can now choose a named volume with `volume =` in its TOML
+  instead of `data =`, which is what this number argued for. The world then
+  lives inside the runtime, which is why a host path is still the default —
+  and why archiving a volume is not implemented yet (debt 3).
 - Sparklines use block elements (U+2580–U+259F), never Braille — Braille
   coverage in monospace fonts is unreliable and a fallback glyph shears the
   cell grid. Run fixed-width strings through `go-runewidth` before truncating.

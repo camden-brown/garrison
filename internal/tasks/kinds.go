@@ -258,6 +258,14 @@ func safetySnapshotStep(archive Archiver) Step {
 		Name: "archive the world being replaced",
 		Est:  30 * time.Second,
 		Run: func(ctx context.Context, s *StepCtx) error {
+			if s.Instance.Volume != "" {
+				// A restore whose safety archive cannot be taken is a
+				// restore with no way back, which is the one thing
+				// tasks.Restore exists to guarantee. Refusing the whole
+				// task is right.
+				return fmt.Errorf("%s is on the volume %q: the world being replaced cannot be archived, "+
+					"so there would be no way back", s.Instance.Name, s.Instance.Volume)
+			}
 			if s.Instance.Data == "" {
 				return errors.New("no data directory configured, so there is nothing to archive")
 			}
@@ -354,6 +362,20 @@ func snapshotStep(archive Archiver) Step {
 		Run: func(ctx context.Context, s *StepCtx) error {
 			defer releaseWrites(s)
 
+			if s.Instance.Volume != "" {
+				// Deliberate and loud. internal/services/backup tars a
+				// directory, and a runtime-managed volume is not one — the
+				// files are inside the runtime. Archiving it means running
+				// a helper container that mounts the volume and streams a
+				// tar out, which is a driver capability that does not exist
+				// yet. Failing here is the only honest option: a backup
+				// task that reported success without writing anything is
+				// how somebody discovers they have no backups on the day
+				// they need one.
+				return fmt.Errorf("%s is on the volume %q, and archiving a volume is not implemented — "+
+					"a volume-backed server has no host directory to tar",
+					s.Instance.Name, s.Instance.Volume)
+			}
 			if s.Instance.Data == "" {
 				return errors.New("no data directory configured, so there is nothing to archive")
 			}

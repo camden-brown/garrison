@@ -183,6 +183,9 @@ Server files are human-readable TOML you can edit with the tool closed:
 game    = "zomboid"
 image   = "renegademaster/zomboid-dedicated-server:1.6.1"
 data    = 'D:\gameservers\zomboid-main\data'
+# volume = "garrison-zomboid-world"  # instead of data: ~32x faster for
+#                                    # small-file saves on Windows, but
+#                                    # cannot be archived yet
 address = "myserver.example.org"   # what players type; only used by the share key
 
 [resources]

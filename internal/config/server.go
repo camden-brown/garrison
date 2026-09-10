@@ -33,6 +33,7 @@ type Server struct {
 	Game    string `toml:"game"`
 	Image   string `toml:"image,omitempty"`
 	Data    string `toml:"data,omitempty"`
+	Volume  string `toml:"volume,omitempty"`
 	Address string `toml:"address,omitempty"`
 
 	Resources Resources      `toml:"resources,omitempty"`
@@ -188,6 +189,7 @@ func (raw Server) instance(name string) (model.Instance, error) {
 		Game:      raw.Game,
 		Image:     raw.Image,
 		Data:      raw.Data,
+		Volume:    raw.Volume,
 		Address:   raw.Address,
 		Resources: model.Resources{Memory: memory, CPUs: raw.Resources.CPUs},
 		Settings:  raw.Settings,
@@ -219,6 +221,7 @@ func fromInstance(inst model.Instance) Server {
 		Game:      inst.Game,
 		Image:     inst.Image,
 		Data:      inst.Data,
+		Volume:    inst.Volume,
 		Address:   inst.Address,
 		Resources: Resources{Memory: FormatBytes(inst.Resources.Memory), CPUs: inst.Resources.CPUs},
 		Settings:  inst.Settings,

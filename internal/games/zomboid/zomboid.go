@@ -123,7 +123,7 @@ func (Game) Plan(inst model.Instance) (model.Plan, error) {
 		Image:  image,
 		Env:    env,
 		Ports:  ports,
-		Mounts: []model.Mount{{Host: inst.Data, Container: "/home/steam/Zomboid"}},
+		Mounts: []model.Mount{inst.Storage("/home/steam/Zomboid")},
 		Resources: model.Resources{
 			Memory: inst.Resources.Memory,
 			CPUs:   inst.Resources.CPUs,

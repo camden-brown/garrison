@@ -948,3 +948,58 @@ func TestRosterObservedCanEmptyTheRoster(t *testing.T) {
 		t.Errorf("got %v, want nobody", srv.Players)
 	}
 }
+
+// One connection in flight is unambiguous, so the id is claimed.
+func TestASingleConnectionIsPairedWithItsName(t *testing.T) {
+	s := apply(withServer("a"),
+		logs("a", connect("76561190000000001")),
+		logs("a", model.Event{Kind: model.KindJoin, At: at, Player: "Dalinar"}),
+	)
+
+	srv, _ := s.Server("a")
+	if len(srv.Players) != 1 {
+		t.Fatalf("got %v", srv.Players)
+	}
+	if srv.Players[0].SteamID != "76561190000000001" {
+		t.Errorf("SteamID = %q, want the only connection's", srv.Players[0].SteamID)
+	}
+}
+
+// Two people loading at once is where the old heuristic went wrong. It
+// claimed the oldest pending connection, which is a coin flip — and the
+// session tracker keys on the Steam id, so one wrong pairing merges two
+// people's histories under a single identity.
+//
+// An empty id is the honest answer. The tracker falls back to the name, which
+// is right per player.
+func TestTwoSimultaneousConnectionsAreNotGuessedAt(t *testing.T) {
+	s := apply(withServer("a"),
+		logs("a", connect("76561190000000001"), connect("76561190000000002")),
+		logs("a", model.Event{Kind: model.KindJoin, At: at, Player: "Dalinar"}),
+		logs("a", model.Event{Kind: model.KindJoin, At: at, Player: "Kaladin"}),
+	)
+
+	srv, _ := s.Server("a")
+	if len(srv.Players) != 2 {
+		t.Fatalf("got %v, want both players", srv.Players)
+	}
+	for _, p := range srv.Players {
+		if p.SteamID != "" {
+			t.Errorf("%s was given id %q from an ambiguous pairing", p.Name, p.SteamID)
+		}
+	}
+}
+
+// A join that carries its own id never consults the pending list, which is
+// the path a game with a proper log takes.
+func TestAJoinWithItsOwnIDIsTrusted(t *testing.T) {
+	s := apply(withServer("a"),
+		logs("a", connect("76561190000000001"), connect("76561190000000002")),
+		logs("a", model.Event{Kind: model.KindJoin, At: at, Player: "Named", SteamID: "76561190000000009"}),
+	)
+
+	srv, _ := s.Server("a")
+	if len(srv.Players) != 1 || srv.Players[0].SteamID != "76561190000000009" {
+		t.Errorf("got %v, want the id the event carried", srv.Players)
+	}
+}
