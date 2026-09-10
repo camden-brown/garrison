@@ -52,11 +52,15 @@ func (v *View) Available(inst model.Instance) (bool, string) {
 }
 
 var (
-	keyUp   = key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up"))
-	keyDown = key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down"))
+	keyUp    = key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up"))
+	keyDown  = key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down"))
+	keyRaise = key.NewBinding(key.WithKeys("K", "shift+up"), key.WithHelp("K", "earlier"))
+	keyLower = key.NewBinding(key.WithKeys("J", "shift+down"), key.WithHelp("J", "later"))
 )
 
-func (v *View) Keys() []key.Binding { return []key.Binding{keyUp, keyDown} }
+func (v *View) Keys() []key.Binding {
+	return []key.Binding{keyUp, keyDown, keyRaise, keyLower}
+}
 
 func (v *View) Update(msg tea.Msg, f tui.Frame, snap core.Snapshot) (tui.View, tea.Cmd) {
 	msgKey, ok := msg.(tea.KeyMsg)
@@ -69,14 +73,48 @@ func (v *View) Update(msg tea.Msg, f tui.Frame, snap core.Snapshot) (tui.View, t
 	}
 
 	next := *v
+	n := len(srv.Instance.Mods)
+
 	switch {
 	case key.Matches(msgKey, keyUp):
 		next.cursor--
 	case key.Matches(msgKey, keyDown):
 		next.cursor++
+
+	case key.Matches(msgKey, keyRaise), key.Matches(msgKey, keyLower):
+		// Reordering only where it means something. Offering it for a game
+		// that loads mods in whatever order it likes would be a key that
+		// rewrites config and changes nothing.
+		if !ordered(srv) || n < 2 {
+			return &next, nil
+		}
+		to := next.cursor - 1
+		if key.Matches(msgKey, keyLower) {
+			to = next.cursor + 1
+		}
+		if to < 0 || to >= n {
+			return &next, nil
+		}
+		from := next.cursor
+		// The cursor follows the mod rather than staying put, so holding K
+		// walks one mod up the list instead of walking the list past the
+		// cursor.
+		next.cursor = to
+		return &next, tui.ReorderMods(srv.Name, from, to)
 	}
-	next.clamp(len(srv.Instance.Mods))
+
+	next.clamp(n)
 	return &next, nil
+}
+
+// ordered reports whether this server's game cares about load order.
+func ordered(srv core.Server) bool {
+	g, err := games.Get(srv.Game)
+	if err != nil {
+		return false
+	}
+	m, ok := g.(games.Moddable)
+	return ok && m.LoadOrderMatters()
 }
 
 func (v *View) clamp(n int) {
@@ -159,14 +197,55 @@ func (v *View) list(f tui.Frame, srv core.Server, m games.Moddable) string {
 			version = "latest"
 		}
 
+		// The resolved name where a resolver has found one, the id until
+		// then. The id is what the operator wrote and never stops being
+		// true, so it is the fallback rather than a blank.
+		label := ref.ID
+		note := source(m)
+		resolved, found := resolvedFor(srv, ref.ID)
+		if found {
+			if resolved.Name != "" {
+				label = resolved.Name
+			}
+			switch {
+			case resolved.Err != "":
+				note = resolved.Err
+			case resolved.NeedsUpdate():
+				note = "update available (" + resolved.Available + ")"
+			case resolved.SizeBytes > 0:
+				note = source(m) + " · " + comp.Bytes(resolved.SizeBytes)
+			}
+		}
+
+		noteStyle := t.Dim
+		if found && (resolved.Err != "" || resolved.NeedsUpdate()) {
+			// A mod that cannot be found and one that has moved on are both
+			// things to act on, so neither is dim.
+			noteStyle = t.Accent
+			if resolved.Err != "" {
+				noteStyle = t.Err
+			}
+		}
+
 		b.WriteString(t.On(t.Accent, selected).Render(marker))
 		b.WriteString(t.On(t.Dim, selected).Render(position))
-		b.WriteString(t.On(t.Title, selected).Render(comp.Pad(ref.ID, 30)))
+		b.WriteString(t.On(t.Title, selected).Render(comp.Pad(label, 30)))
 		b.WriteString(t.On(t.Dim, selected).Render(comp.Pad(version, 16)))
-		b.WriteString(t.On(t.Dim, selected).Render(comp.Truncate(source(m), width-2-comp.Width(position)-30-16)))
+		b.WriteString(t.On(noteStyle, selected).Render(
+			comp.Truncate(note, width-2-comp.Width(position)-30-16)))
 		b.WriteString("\n")
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// resolvedFor is what a resolver found out about one configured mod.
+func resolvedFor(srv core.Server, id string) (model.Mod, bool) {
+	for _, m := range srv.Mods {
+		if m.ID == id {
+			return m, true
+		}
+	}
+	return model.Mod{}, false
 }
 
 func right(srv core.Server, m games.Moddable) string {
@@ -196,7 +275,7 @@ func source(m games.Moddable) string {
 // act on should say so rather than leave you hunting for the key.
 func footer(m games.Moddable) string {
 	if m.LoadOrderMatters() {
-		return "Edit [[mods]] in the server's TOML. Reordering and update checks arrive with a mod resolver."
+		return "K / J moves a mod earlier or later — the order is the load order, and applying it recreates the container."
 	}
-	return "Edit [[mods]] in the server's TOML. Update checks arrive with a mod resolver."
+	return "Order does not matter for this game. Add or remove mods in the server's TOML."
 }

@@ -67,14 +67,7 @@ const (
 	ModSourceURL          ModSource = "url"
 )
 
-// Mod is a resolved mod: what a source told us about a ModRef.
-type Mod struct {
-	ID        string
-	Name      string
-	Version   string
-	Available string // latest known version, for the update badge
-	Enabled   bool
-	SizeBytes int64
-	Requires  []string // other mod IDs
-	Changelog string
-}
+// Mod is a resolved mod: what a source told us about a ModRef. It is
+// model.Mod under another name, because the snapshot carries these to the
+// Mods view and core imports no game package.
+type Mod = model.Mod

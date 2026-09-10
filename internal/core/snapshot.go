@@ -126,6 +126,12 @@ type Server struct {
 	// run once — see BackupsKnown.
 	Backups []model.Archive
 
+	// Mods is the configured mods as resolved: the TOML's order, with
+	// whatever a resolver found out about each. Empty for a game with no
+	// mod system, and unresolved — names and versions blank — until a
+	// resolver has run.
+	Mods []model.Mod
+
 	// Sessions is who has played recently, newest first, as far back as the
 	// tracker's window. Open sessions — players still connected — have a
 	// zero Left, which model.Session.Open reports.

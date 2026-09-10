@@ -35,6 +35,7 @@ import (
 	"github.com/camden-brown/garrison/internal/services/fleet"
 	"github.com/camden-brown/garrison/internal/services/logs"
 	"github.com/camden-brown/garrison/internal/services/metrics"
+	"github.com/camden-brown/garrison/internal/services/mods"
 	"github.com/camden-brown/garrison/internal/services/players"
 	"github.com/camden-brown/garrison/internal/services/scheduler"
 	sqlitestore "github.com/camden-brown/garrison/internal/store"
@@ -211,6 +212,15 @@ func setup(ctx context.Context, confDir, endpoint string, interval time.Duration
 	// pool is closed last so a command in flight is not cut off mid-reply.
 	run(func() {
 		commands.Run(ctx, store)
+	})
+	// Mod resolution is hourly and entirely for drawing a badge, so it is
+	// the slowest thing here by a wide margin.
+	run(func() {
+		(&mods.Poller{
+			Interval: mods.DefaultInterval,
+			Refs:     modRefs{store: store},
+			Sources:  modSources{store: store},
+		}).Run(ctx, store)
 	})
 	run(func() {
 		(&players.RosterPoller{
@@ -524,6 +534,55 @@ func (b boundRoster) Ask(ctx context.Context, server string) ([]model.Player, bo
 
 	out, err := rostered.Roster(ctx, c)
 	return out, true, err
+}
+
+// modRefs and modSources are the mod resolver's two halves: what each server
+// has configured, and which resolver can answer for it.
+//
+// The source comes from asserting games.Moddable and reading ModSource, which
+// is the assertion that keeps a list of which games have mods out of the
+// service — and out of everywhere else.
+type modRefs struct{ store *core.Store }
+
+func (m modRefs) ModRefs() map[string][]model.ModRef {
+	if m.store == nil {
+		return nil
+	}
+	snap := m.store.Snapshot()
+	out := make(map[string][]model.ModRef, len(snap.Servers))
+	for _, srv := range snap.Servers {
+		out[srv.Name] = srv.Instance.Mods
+	}
+	return out
+}
+
+type modSources struct{ store *core.Store }
+
+func (m modSources) For(server string) mods.Resolver {
+	if m.store == nil {
+		return nil
+	}
+	srv, ok := m.store.Snapshot().Server(server)
+	if !ok {
+		return nil
+	}
+	g, err := games.Get(srv.Game)
+	if err != nil {
+		return nil
+	}
+	moddable, ok := g.(games.Moddable)
+	if !ok {
+		return nil
+	}
+
+	switch moddable.ModSource() {
+	case games.ModSourceWorkshop:
+		return mods.Workshop{}
+	default:
+		// A source Garrison has no resolver for. The Mods screen shows the
+		// configured list unresolved, which is honest — nobody has looked.
+		return nil
+	}
 }
 
 // fleetNames is the set the roster poller walks.

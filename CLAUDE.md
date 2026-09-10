@@ -79,6 +79,11 @@ summary for a scheduled job.
 - `internal/services/players` also polls rosters for games that implement
   `games.Rostered`, so an asked-for roster replaces an inferred one and both
   land in the same snapshot field.
+- `internal/services/mods` — resolves configured mod ids into names, sizes and
+  update badges against the Steam Workshop, hourly. One request for a whole
+  server's list rather than one per mod, and the configured order is
+  preserved: for a game where load order matters, that order is the
+  operator's decision and a resolver sorting it would reorder their server.
 
 **Capabilities reach a plugin pre-bound.** `internal/tasks` and the services
 must not import `internal/games` — `internal/store` depends on tasks and the
@@ -171,12 +176,12 @@ Debts still outstanding, all deliberate and all noted in the code:
 4. Restore and delete have no *scheduled* form, deliberately. Both are things
    a person asked for by typing a server's name; there is no policy that would
    run either unattended and none worth inventing.
-5. The Mods screen lists what is configured and cannot change it. `Moddable`
-   is designed around mods a server downloads from its own config (Zomboid's
-   Workshop ids), and Valheim's BepInEx plugins are files with no such
-   mechanism — so Valheim implements no `Moddable` and the screen says so.
-   Whether the interface needs an install path is a question for the first
-   game that actually has one; guessing now is what ADR 0006 warns against.
+5. Valheim has no mod management, and cannot with this interface. `Moddable`
+   is shaped around mods a server downloads from its own config — Zomboid's
+   Workshop ids, which is why reordering and update checks work there — and
+   Valheim's BepInEx plugins are files somebody drops in a directory. Whether
+   the interface needs an install path is a question for the first game that
+   actually needs one; guessing now is what ADR 0006 warns against.
 5. Drain works for games with a channel and degrades for those without.
    `RestartWithDrain` warns at 15m, 5m and 1m, saves, then stops; a game with
    no `games.Drainable` skips the wait and says so in the task's history
@@ -218,10 +223,10 @@ tile, with no game-specific code in any view.
 been dropped; adding a game is a package and a line in `games/all`, so another
 one is work to be done rather than a milestone to be reached.
 
-What is left is the rest of **M4**: reordering the mod load order from the
-Mods screen, and checking the Workshop for updates. Both are now buildable —
-Zomboid is a game whose mods are declared in config and whose order matters,
-which is what those features needed and Valheim could not provide.
+**Every milestone is done.** What remains is the debt list above, and none of
+it is a milestone: two of the six are facts about Valheim rather than gaps in
+Garrison, one is a measurement arguing for a `model.Mount` change, and the
+render loop needs an hour on Windows hardware that no test here can supply.
 
 ## Non-negotiables
 

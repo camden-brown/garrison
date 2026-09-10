@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 
@@ -239,6 +240,19 @@ func TestGoldenRenders(t *testing.T) {
 		},
 		{name: "empty", snap: snapshot("ordered")},
 		{
+			// What the screen looks like once a resolver has run: names
+			// instead of ids, a size, and a badge on the one that moved on.
+			name: "resolved",
+			snap: resolvedSnapshot("ordered",
+				[]model.ModRef{{ID: "2822286426"}, {ID: "1299328280", Pin: "4.0.1"}, {ID: "9999999999"}},
+				[]model.Mod{
+					{ID: "2822286426", Name: "Hydrocraft", Version: "2026-01-01",
+						Available: "2026-09-01", SizeBytes: 41 << 20},
+					{ID: "1299328280", Pin: "4.0.1", Name: "Brita's Weapons", SizeBytes: 512 << 20},
+					{ID: "9999999999", Err: "the Workshop has no visible item with this id"},
+				}),
+		},
+		{
 			name: "narrow", width: 80, height: 24,
 			snap: snapshot("ordered", model.ModRef{ID: "2822286426", Pin: "2.11.0"}),
 		},
@@ -268,5 +282,182 @@ func TestGoldenRenders(t *testing.T) {
 				t.Errorf("render differs from %s\n--- got ---\n%s\n--- want ---\n%s", golden, got, want)
 			}
 		})
+	}
+}
+
+// resolvedSnapshot is a fleet whose mods a resolver has looked up.
+func resolvedSnapshot(game string, refs []model.ModRef, resolved []model.Mod) core.Snapshot {
+	s := snapshot(game, refs...)
+	return core.Reduce(s, core.ModsResolved{At: now, Server: "server-one", Mods: resolved})
+}
+
+func pressMods(v tui.View, snap core.Snapshot, keys ...string) (tui.View, []tea.Msg) {
+	var msgs []tea.Msg
+	for _, k := range keys {
+		var msg tea.KeyMsg
+		switch k {
+		case "down":
+			msg = tea.KeyMsg{Type: tea.KeyDown}
+		case "up":
+			msg = tea.KeyMsg{Type: tea.KeyUp}
+		default:
+			msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
+		}
+		next, cmd := v.Update(msg, frame(), snap)
+		v = next
+		if cmd != nil {
+			msgs = append(msgs, cmd())
+		}
+	}
+	return v, msgs
+}
+
+// Reordering is the point for a game that loads mods in order: a dependency
+// after its dependent is a server that will not start.
+func TestReorderingMovesAMod(t *testing.T) {
+	snap := snapshot("ordered",
+		model.ModRef{ID: "first"}, model.ModRef{ID: "second"}, model.ModRef{ID: "third"})
+
+	// Down to the second mod, then raise it.
+	v, _ := pressMods(mods.New(), snap, "down")
+	_, msgs := pressMods(v, snap, "K")
+
+	var moved *tui.ReorderMsg
+	for _, m := range msgs {
+		if r, ok := m.(tui.ReorderMsg); ok {
+			moved = &r
+		}
+	}
+	if moved == nil {
+		t.Fatal("K moved nothing")
+	}
+	if moved.From != 1 || moved.To != 0 {
+		t.Errorf("moved %d -> %d, want 1 -> 0", moved.From, moved.To)
+	}
+	if moved.Server != "server-one" {
+		t.Errorf("moved on %q", moved.Server)
+	}
+}
+
+// A key that rewrites config and changes nothing is worse than no key, so it
+// is not offered for a game that loads mods in whatever order it likes.
+func TestNoReorderingWhereOrderDoesNotMatter(t *testing.T) {
+	snap := snapshot("unordered", model.ModRef{ID: "a"}, model.ModRef{ID: "b"})
+
+	_, msgs := pressMods(mods.New(), snap, "K")
+	for _, m := range msgs {
+		if _, ok := m.(tui.ReorderMsg); ok {
+			t.Error("an unordered game offered reordering")
+		}
+	}
+}
+
+func TestReorderingStopsAtTheEnds(t *testing.T) {
+	snap := snapshot("ordered", model.ModRef{ID: "a"}, model.ModRef{ID: "b"})
+
+	// The first mod cannot go earlier.
+	_, msgs := pressMods(mods.New(), snap, "K")
+	for _, m := range msgs {
+		if _, ok := m.(tui.ReorderMsg); ok {
+			t.Error("the first mod was moved earlier")
+		}
+	}
+
+	// Nor the last later.
+	v, _ := pressMods(mods.New(), snap, "down")
+	_, msgs = pressMods(v, snap, "J")
+	for _, m := range msgs {
+		if _, ok := m.(tui.ReorderMsg); ok {
+			t.Error("the last mod was moved later")
+		}
+	}
+}
+
+// The cursor follows the mod, so holding K walks one mod up the list rather
+// than walking the list past the cursor.
+func TestTheCursorFollowsTheMovedMod(t *testing.T) {
+	snap := snapshot("ordered",
+		model.ModRef{ID: "first"}, model.ModRef{ID: "second"}, model.ModRef{ID: "third"})
+
+	v, _ := pressMods(mods.New(), snap, "down", "down") // on "third"
+	v, _ = pressMods(v, snap, "K")
+
+	// The snapshot has not moved — the store would have — so the cursor
+	// should now be on index 1, which is still "second" in this fixture.
+	// What matters is that it moved with the intent rather than staying.
+	_, msgs := pressMods(v, snap, "K")
+	var second *tui.ReorderMsg
+	for _, m := range msgs {
+		if r, ok := m.(tui.ReorderMsg); ok {
+			second = &r
+		}
+	}
+	if second == nil {
+		t.Fatal("the second K moved nothing")
+	}
+	if second.From != 1 {
+		t.Errorf("the second move was from %d, want 1 — the cursor did not follow", second.From)
+	}
+}
+
+// A resolver turns a column of ids into a list a person can read.
+func TestResolvedModsShowTheirNames(t *testing.T) {
+	snap := resolvedSnapshot("ordered",
+		[]model.ModRef{{ID: "2822286426"}},
+		[]model.Mod{{ID: "2822286426", Name: "Hydrocraft", SizeBytes: 4 << 20}},
+	)
+
+	got := mods.New().Render(frame(), snap)
+	if !strings.Contains(got, "Hydrocraft") {
+		t.Errorf("the resolved name is missing:\n%s", got)
+	}
+	if !strings.Contains(got, "MiB") {
+		t.Errorf("the size is missing:\n%s", got)
+	}
+}
+
+// The id is what the operator wrote and never stops being true, so it is the
+// fallback rather than a blank row.
+func TestUnresolvedModsStillShowTheirID(t *testing.T) {
+	snap := snapshot("ordered", model.ModRef{ID: "2822286426"})
+
+	if got := mods.New().Render(frame(), snap); !strings.Contains(got, "2822286426") {
+		t.Errorf("an unresolved mod vanished:\n%s", got)
+	}
+}
+
+func TestAnUpdateIsFlagged(t *testing.T) {
+	snap := resolvedSnapshot("ordered",
+		[]model.ModRef{{ID: "1"}},
+		[]model.Mod{{ID: "1", Name: "Old", Version: "2026-01-01", Available: "2026-09-01"}},
+	)
+
+	if got := mods.New().Render(frame(), snap); !strings.Contains(got, "update available") {
+		t.Errorf("an out-of-date mod is not flagged:\n%s", got)
+	}
+}
+
+// The operator wrote that id themselves and the answer is usually a typo.
+func TestAnUnknownModSaysSo(t *testing.T) {
+	snap := resolvedSnapshot("ordered",
+		[]model.ModRef{{ID: "9999999999"}},
+		[]model.Mod{{ID: "9999999999", Err: "the Workshop has no visible item with this id"}},
+	)
+
+	if got := mods.New().Render(frame(), snap); !strings.Contains(got, "no visible item") {
+		t.Errorf("an unknown mod is not reported:\n%s", got)
+	}
+}
+
+// A pin is the operator saying which version they want; a badge nagging about
+// a deliberate choice is noise.
+func TestAPinnedModIsNotNagged(t *testing.T) {
+	snap := resolvedSnapshot("ordered",
+		[]model.ModRef{{ID: "1", Pin: "2.11.0"}},
+		[]model.Mod{{ID: "1", Pin: "2.11.0", Name: "Pinned", Version: "2.11.0", Available: "2026-09-01"}},
+	)
+
+	if got := mods.New().Render(frame(), snap); strings.Contains(got, "update available") {
+		t.Errorf("a pinned mod was nagged:\n%s", got)
 	}
 }

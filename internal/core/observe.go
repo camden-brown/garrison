@@ -66,3 +66,8 @@ func (s *Store) SessionsListed(ctx context.Context, at time.Time, server string,
 func (s *Store) RosterObserved(ctx context.Context, at time.Time, server string, players []model.Player) {
 	s.Send(ctx, RosterObserved{At: at, Server: server, Players: players})
 }
+
+// ModsResolved records what a resolver found out about a server's mods.
+func (s *Store) ModsResolved(ctx context.Context, at time.Time, server string, mods []model.Mod) {
+	s.Send(ctx, ModsResolved{At: at, Server: server, Mods: mods})
+}

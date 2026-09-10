@@ -805,3 +805,24 @@ func (m RosterObserved) apply(s Snapshot) Snapshot {
 		srv.connecting = nil
 	}))
 }
+
+// ModsResolved is a resolver reporting what it found out about a server's
+// mods.
+//
+// The order is the configured order and the resolver must not change it: for a
+// game where load order matters, the list is the operator's decision and a
+// resolver sorting it by name would quietly reorder their server.
+type ModsResolved struct {
+	At     time.Time
+	Server string
+	Mods   []model.Mod
+}
+
+func (m ModsResolved) apply(s Snapshot) Snapshot {
+	s.At = m.At
+	return s.withServers(mapServer(s.Servers, m.Server, func(srv *Server) {
+		out := make([]model.Mod, len(m.Mods))
+		copy(out, m.Mods)
+		srv.Mods = out
+	}))
+}

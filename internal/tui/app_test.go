@@ -51,6 +51,7 @@ type stubStore struct {
 	created   []model.Instance
 	deleted   []string
 	commands  []string
+	reordered []string
 	updated   []string
 	applied   []string
 }
@@ -92,6 +93,9 @@ func (s *stubStore) DeleteServer(_ context.Context, instance string) {
 }
 func (s *stubStore) SendCommand(_ context.Context, instance, text string) {
 	s.commands = append(s.commands, instance+": "+text)
+}
+func (s *stubStore) ReorderMods(_ context.Context, instance string, from, to int) {
+	s.reordered = append(s.reordered, instance)
 }
 func (s *stubStore) Notify(_ context.Context, server, text string) {
 	s.notices = append(s.notices, server+": "+text)

@@ -104,6 +104,57 @@ func (s *Store) Backup(ctx context.Context, instance string) {
 	})
 }
 
+// ReorderMods moves a mod in the load order and applies the change.
+//
+// It is a save and a task rather than a draft, unlike a setting. A setting's
+// draft exists so several can be batched behind one confirmation; a reorder is
+// one move that either helps or does not, and holding it unapplied would mean
+// a Mods screen showing an order the server is not running with no obvious
+// way to tell which is which.
+//
+// Order is the whole point for the games that have this: Project Zomboid loads
+// mods in the order WorkshopItems lists them, and a dependency after its
+// dependent is a server that will not start.
+func (s *Store) ReorderMods(ctx context.Context, instance string, from, to int) {
+	if s.saver == nil {
+		s.raise(ctx, instance, fmt.Errorf("%s: reorder: nowhere to write the configuration", instance))
+		return
+	}
+	inst, ok := s.Snapshot().Instance(instance)
+	if !ok {
+		s.raise(ctx, instance, fmt.Errorf("%s: reorder: Garrison has no configuration for it", instance))
+		return
+	}
+	if from < 0 || from >= len(inst.Mods) || to < 0 || to >= len(inst.Mods) || from == to {
+		return
+	}
+
+	mods := make([]model.ModRef, len(inst.Mods))
+	copy(mods, inst.Mods)
+	moved := mods[from]
+	mods = append(mods[:from], mods[from+1:]...)
+	rest := make([]model.ModRef, 0, len(mods)+1)
+	rest = append(rest, mods[:to]...)
+	rest = append(rest, moved)
+	rest = append(rest, mods[to:]...)
+
+	next := inst
+	next.Mods = rest
+
+	if err := s.saver.Save(next); err != nil {
+		s.raise(ctx, instance, err)
+		return
+	}
+	s.Send(ctx, InstanceAdded{At: s.now(), Instance: next})
+
+	// The order lives in the config files the game reads, so it takes an
+	// apply to reach the server. Recreate, because for every game that has
+	// this the mod list is fixed when the container is built.
+	s.submit(ctx, instance, tasks.KindApplyConfig, func(id string) *tasks.Task {
+		return tasks.ApplyConfig(id, instance, tasks.TriggerManual, next, s.saver, true)
+	})
+}
+
 // Commander runs console commands. Declared here so the store can hand one
 // off without importing the service that does it (ADR 0007).
 type Commander interface {

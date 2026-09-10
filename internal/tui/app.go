@@ -36,6 +36,9 @@ type Store interface {
 	CreateServer(ctx context.Context, inst model.Instance)
 	DeleteServer(ctx context.Context, instance string)
 
+	// ReorderMods moves a mod in a server's load order and applies it.
+	ReorderMods(ctx context.Context, instance string, from, to int)
+
 	// SendCommand runs a console command. The reply comes back as console
 	// output rather than as a return value, which is what keeps the view
 	// out of the request.
@@ -208,6 +211,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case CommandMsg:
 		a.store.SendCommand(a.ctx, msg.Server, msg.Text)
+		return a, nil
+
+	case ReorderMsg:
+		a.store.ReorderMods(a.ctx, msg.Server, msg.From, msg.To)
 		return a, nil
 
 	case tea.KeyMsg:

@@ -3,4 +3,4 @@
 │ ▌      ValheimModding-Jotunn         2.19.0          Thunderstore                        │
 │        denikson-BepInExPack_Valheim  latest          Thunderstore                        │
 ╰──────────────────────────────────────────────────────────────────────────────────────────╯
-Edit [[mods]] in the server's TOML. Update checks arrive with a mod resolver.
+Order does not matter for this game. Add or remove mods in the server's TOML.

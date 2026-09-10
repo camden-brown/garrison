@@ -57,10 +57,11 @@ are written once and work the same for every game.
   drops what you type.
 - **Player tracking** — who is on now, seven days of sessions, and occupancy by
   hour so you can pick a restart window that bothers nobody.
-- **Mods** — the configured load order, numbered only for games where order
-  means something, and written into the config for games whose server
-  downloads its own mods. *Reordering, update checks and conflict detection
-  are not built.*
+- **Mods** — the load order, numbered and reorderable where order means
+  something, written into the config for games whose server downloads its own
+  mods, and update-checked against the Steam Workshop. A mod the Workshop has
+  never heard of is shown as a problem rather than dropped from a list you
+  wrote yourself.
 - **A real task engine** — restarts, updates, backups and restores are durable
   step sequences with declared rollback, and a cron scheduler with two policies
   for what a due job does when people are playing. A restore archives the world
@@ -367,18 +368,18 @@ fake encodes match the thing it stands in for.
 | **M1** ✅ | Live truth | Stats and log streaming, the dashboard with sparklines, Valheim behind the `Game` interface. |
 | **M2** ✅ | Task engine | Lanes, steps, compensation, SQLite persistence, the Tasks view. Restart, backup, update, restore and the scheduler, plus the Console and Backups screens over them. |
 | **M3** ✅ | Second game | The settings form and apply, with Valheim's world modifiers read out of the game's own assembly. Project Zomboid: 413 settings across two config syntaxes, RCON, and Workshop mods with load order — plus the transport and the four capabilities it needed. |
-| **M4** ◐ | Players and mods | Built: the Players view — live roster, seven days of sessions, occupancy by hour — over a roster that is asked for where a game can answer and inferred where it cannot. Mods lists and writes the configured load order. Outstanding: reordering it from the screen, and Workshop update checks. |
+| **M4** ✅ | Players and mods | The Players view — live roster, seven days of sessions, occupancy by hour — over a roster that is asked for where a game can answer and inferred where it cannot. The Mods view lists, reorders and update-checks against the Workshop. |
 | **M5** ✅ | Provisioning and polish | The wizard with port scanning, restore, delete, ambient mode, the palette, the `/` filter, the `:` command line, CLI subcommands, the `?` help overlay, the apply diff and 80-column layouts. |
 
-**M4 is the only milestone still open**, and what is left in it is mod
-management: reordering the load order from the Mods screen, and checking the
-Workshop for updates. A third game was planned and has been dropped —
-Garrison supports two, and adding another is a package and a registry line
-rather than a milestone.
+**Every milestone is done.** M0 through M5, with the third game that was
+planned at M4 dropped rather than built — Garrison supports two, and adding
+another is a Go package and a line in a registry rather than a milestone.
 
-Everything the second game unblocked has landed: the console sends commands,
-scheduled restarts drain, and a roster is asked for rather than guessed at
-where the game can answer.
+What is left is not a roadmap. The debts in [`CLAUDE.md`](CLAUDE.md) are the
+honest ones: Valheim mis-pairs two players who load out of order because its
+log never links a name to a connection, `model.Mount` cannot express a Docker
+named volume, and the render loop has never had its hour on Windows hardware.
+Each says what it would take.
 
 The remaining debts in [`CLAUDE.md`](CLAUDE.md) are narrower than they were.
 Valheim still mis-pairs two players who load out of order, because its log

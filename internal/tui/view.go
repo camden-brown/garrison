@@ -110,6 +110,21 @@ func Action(op core.Op, server string) tea.Cmd {
 	return func() tea.Msg { return ActionMsg{Op: op, Server: server} }
 }
 
+// ReorderMsg is the Mods view moving a mod in the load order.
+//
+// Indices rather than ids, because the operator moved a row and the list is
+// what they were looking at. The store validates them against the
+// configuration it holds, which is the only copy that matters.
+type ReorderMsg struct {
+	Server   string
+	From, To int
+}
+
+// ReorderMods returns a tea.Cmd that moves a mod in the load order.
+func ReorderMods(server string, from, to int) tea.Cmd {
+	return func() tea.Msg { return ReorderMsg{Server: server, From: from, To: to} }
+}
+
 // CommandMsg is the console sending a command to a server.
 //
 // A message rather than a call for the same reason every other action is one:
