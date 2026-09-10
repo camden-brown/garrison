@@ -612,27 +612,40 @@ func TestDeathDoesNotRemoveThePlayer(t *testing.T) {
 	}
 }
 
-func TestConsoleTailIsBounded(t *testing.T) {
-	s := withServer("a")
-	for i := 0; i < maxConsole*3; i++ {
-		s = apply(s, logs("a", model.Event{Kind: model.KindInfo, At: at, Text: "line"}))
+func TestConsoleIsBounded(t *testing.T) {
+	const over = 50
+
+	events := make([]model.Event, 0, model.ConsoleCap+over)
+	for i := 0; i < model.ConsoleCap+over; i++ {
+		events = append(events, model.Event{Kind: model.KindInfo, At: at, Text: itoa(i)})
 	}
+	s := apply(withServer("a"), logs("a", events...))
 
 	srv, _ := s.Server("a")
-	if got := len(srv.Console); got != maxConsole {
-		t.Errorf("console holds %d lines, want the cap %d", got, maxConsole)
+	if got := srv.Console.Len(); got != model.ConsoleCap {
+		t.Errorf("console holds %d lines, want the cap %d", got, model.ConsoleCap)
+	}
+	if got := srv.Console.Dropped(); got != over {
+		t.Errorf("console dropped %d lines, want %d", got, over)
 	}
 }
 
 func TestConsoleKeepsTheNewestLines(t *testing.T) {
-	s := withServer("a")
-	for i := 0; i < maxConsole+3; i++ {
-		s = apply(s, logs("a", model.Event{Kind: model.KindInfo, At: at, Text: itoa(i)}))
+	const n = model.ConsoleCap + 3
+
+	events := make([]model.Event, 0, n)
+	for i := 0; i < n; i++ {
+		events = append(events, model.Event{Kind: model.KindInfo, At: at, Text: itoa(i)})
 	}
+	s := apply(withServer("a"), logs("a", events...))
 
 	srv, _ := s.Server("a")
-	if got := srv.Console[len(srv.Console)-1].Text; got != itoa(maxConsole+2) {
+	visible := srv.Console.Events()
+	if got := visible[len(visible)-1].Text; got != itoa(n-1) {
 		t.Errorf("newest console line = %q, want the last one written", got)
+	}
+	if got := visible[0].Text; got != itoa(n-model.ConsoleCap) {
+		t.Errorf("oldest console line = %q, want the oldest that still fits", got)
 	}
 }
 
@@ -678,7 +691,7 @@ func TestPollKeepsConsoleAndRoster(t *testing.T) {
 	if len(srv.Players) != 1 {
 		t.Errorf("the poll emptied the roster")
 	}
-	if len(srv.Console) == 0 {
+	if srv.Console.Len() == 0 {
 		t.Errorf("the poll emptied the console")
 	}
 }
@@ -809,5 +822,58 @@ func TestLoadingConfigKeepsHistoryAndRoster(t *testing.T) {
 	}
 	if len(srv.Players) != 1 {
 		t.Error("loading config discarded the roster")
+	}
+}
+
+func TestBackupsListedSortsNewestFirst(t *testing.T) {
+	older := model.Archive{Name: "older", Taken: at.Add(-48 * time.Hour), Bytes: 1}
+	newer := model.Archive{Name: "newer", Taken: at.Add(-1 * time.Hour), Bytes: 2}
+
+	s := apply(withServer("a"), BackupsListed{
+		At: at, Server: "a", Archive: []model.Archive{older, newer},
+	})
+
+	srv, _ := s.Server("a")
+	if len(srv.Backups) != 2 {
+		t.Fatalf("got %d archives, want 2", len(srv.Backups))
+	}
+	if srv.Backups[0].Name != "newer" {
+		t.Errorf("first archive is %q, want the newest", srv.Backups[0].Name)
+	}
+	if !srv.BackupsKnown {
+		t.Error("BackupsKnown is false after a listing, so the view cannot tell none from not-yet")
+	}
+}
+
+// Empty before the poller has run means "not looked", and empty after means
+// "none". A view that cannot tell them apart says the wrong thing on startup.
+func TestBackupsAreUnknownUntilListed(t *testing.T) {
+	srv, _ := withServer("a").Server("a")
+	if srv.BackupsKnown {
+		t.Error("backups are known before anything listed them")
+	}
+
+	s := apply(withServer("a"), BackupsListed{At: at, Server: "a", Archive: nil})
+	srv, _ = s.Server("a")
+	if !srv.BackupsKnown {
+		t.Error("an empty listing did not mark backups known")
+	}
+	if len(srv.Backups) != 0 {
+		t.Errorf("got %d archives, want none", len(srv.Backups))
+	}
+}
+
+// A listing replaces rather than merges: archives are deleted from outside
+// Garrison, and a merge would keep showing one that has been moved away.
+func TestBackupsListedReplaces(t *testing.T) {
+	s := apply(withServer("a"), BackupsListed{At: at, Server: "a", Archive: []model.Archive{
+		{Name: "one", Taken: at},
+		{Name: "two", Taken: at.Add(-time.Hour)},
+	}})
+	s = apply(s, BackupsListed{At: at, Server: "a", Archive: []model.Archive{{Name: "two", Taken: at.Add(-time.Hour)}}})
+
+	srv, _ := s.Server("a")
+	if len(srv.Backups) != 1 || srv.Backups[0].Name != "two" {
+		t.Errorf("backups = %v, want only the one still on disk", srv.Backups)
 	}
 }

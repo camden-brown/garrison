@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/camden-brown/garrison/internal/model"
@@ -98,6 +99,53 @@ func (s *Store) Backup(ctx context.Context, instance string) {
 	}
 	s.submit(ctx, instance, tasks.KindBackup, func(id string) *tasks.Task {
 		return tasks.Backup(id, instance, tasks.TriggerManual, s.archives.For(instance), s.keepBackups)
+	})
+}
+
+// CreateServer writes a new server's configuration and adds it to the fleet.
+//
+// It does not start anything. Creating the container is what Start already
+// does on a server that has none, so the wizard's job ends at a file on disk
+// and a row in the fleet — and a server that appears configured but not built
+// is a real, useful state rather than an incomplete one.
+func (s *Store) CreateServer(ctx context.Context, inst model.Instance) {
+	if s.saver == nil {
+		s.raise(ctx, inst.Name, fmt.Errorf("%s: create: nowhere to write the configuration", inst.Name))
+		return
+	}
+	if inst.Name == "" {
+		s.raise(ctx, "", errors.New("create: a server needs a name"))
+		return
+	}
+	if _, exists := s.Snapshot().Server(inst.Name); exists {
+		s.raise(ctx, inst.Name, fmt.Errorf("%s: create: there is already a server with that name", inst.Name))
+		return
+	}
+	if err := s.saver.Save(inst); err != nil {
+		s.raise(ctx, inst.Name, err)
+		return
+	}
+	s.Send(ctx, InstanceAdded{At: s.now(), Instance: inst})
+}
+
+// Restore replaces a server's world with an archive.
+//
+// The confirmation for this lives in the view — it is one of the actions that
+// asks for the server's name to be typed — but the safety does not: the task
+// archives what it is about to overwrite and unwinds to it if anything fails.
+// A caller that skipped the prompt still cannot lose a world without a copy of
+// it being taken first.
+func (s *Store) Restore(ctx context.Context, instance, archive string) {
+	if s.archives == nil {
+		s.raise(ctx, instance, fmt.Errorf("%s: restore: nowhere to read archives from", instance))
+		return
+	}
+	if archive == "" {
+		s.raise(ctx, instance, fmt.Errorf("%s: restore: no archive chosen", instance))
+		return
+	}
+	s.submit(ctx, instance, tasks.KindRestore, func(id string) *tasks.Task {
+		return tasks.Restore(id, instance, tasks.TriggerManual, s.archives.For(instance), archive)
 	})
 }
 

@@ -51,3 +51,13 @@ func (s *Store) HostDescribed(ctx context.Context, at time.Time, info host.Info)
 func (s *Store) StatsSampled(ctx context.Context, instance string, sample host.Sample) {
 	s.Send(ctx, StatsSampled{At: s.now(), Server: instance, Sample: sample})
 }
+
+// BackupsListed records what the archive poller found for one server.
+func (s *Store) BackupsListed(ctx context.Context, at time.Time, server string, archives []model.Archive) {
+	s.Send(ctx, BackupsListed{At: at, Server: server, Archive: archives})
+}
+
+// SessionsListed records the player history the tracker read back.
+func (s *Store) SessionsListed(ctx context.Context, at time.Time, server string, sessions []model.Session) {
+	s.Send(ctx, SessionsListed{At: at, Server: server, Sessions: sessions})
+}

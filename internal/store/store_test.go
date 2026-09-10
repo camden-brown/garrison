@@ -400,3 +400,114 @@ func TestPruning(t *testing.T) {
 		t.Errorf("%d metric points left, want 1", len(points))
 	}
 }
+
+func TestSessionsRoundTrip(t *testing.T) {
+	db := open(t)
+
+	joined := time.Date(2026, 9, 9, 20, 0, 0, 0, time.UTC)
+	id, err := db.SessionOpened("a", model.Player{Name: "Huldra", SteamID: "76561"}, joined)
+	if err != nil {
+		t.Fatalf("SessionOpened: %v", err)
+	}
+
+	// Still on: the session comes back open, which is what separates
+	// "played for two hours" from "has been on for two hours".
+	got, err := db.SessionsSince("a", joined.Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("SessionsSince: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d sessions, want 1", len(got))
+	}
+	if !got[0].Open() {
+		t.Error("a session with nobody having left is not open")
+	}
+	if got[0].Player != "Huldra" || got[0].SteamID != "76561" {
+		t.Errorf("session = %+v, want the player it was opened for", got[0])
+	}
+
+	if err := db.SessionClosed(id, joined.Add(2*time.Hour)); err != nil {
+		t.Fatalf("SessionClosed: %v", err)
+	}
+	got, _ = db.SessionsSince("a", joined.Add(-time.Hour))
+	if got[0].Open() {
+		t.Error("the session is still open after being closed")
+	}
+	if d := got[0].Duration(joined.Add(5 * time.Hour)); d != 2*time.Hour {
+		t.Errorf("duration = %v, want 2h — a closed session does not keep growing", d)
+	}
+}
+
+func TestSessionsAreScopedToTheirServer(t *testing.T) {
+	db := open(t)
+	at := time.Date(2026, 9, 9, 20, 0, 0, 0, time.UTC)
+
+	db.SessionOpened("a", model.Player{Name: "Huldra"}, at)
+	db.SessionOpened("b", model.Player{Name: "Bjorn"}, at)
+
+	got, _ := db.SessionsSince("a", at.Add(-time.Hour))
+	if len(got) != 1 || got[0].Player != "Huldra" {
+		t.Errorf("server a has %v, want only its own session", got)
+	}
+}
+
+func TestSessionsRespectTheWindow(t *testing.T) {
+	db := open(t)
+	old := time.Date(2026, 9, 1, 20, 0, 0, 0, time.UTC)
+	recent := time.Date(2026, 9, 9, 20, 0, 0, 0, time.UTC)
+
+	db.SessionOpened("a", model.Player{Name: "Old"}, old)
+	db.SessionOpened("a", model.Player{Name: "Recent"}, recent)
+
+	got, _ := db.SessionsSince("a", recent.Add(-24*time.Hour))
+	if len(got) != 1 || got[0].Player != "Recent" {
+		t.Errorf("got %v, want only the session inside the window", got)
+	}
+}
+
+// A session left open by a Garrison that was killed is closed at the time it
+// was last seen, not at the time of the next start — otherwise three days of
+// downtime becomes a three-day session at the top of every chart.
+func TestCloseStaleSessionsDoesNotInventPlaytime(t *testing.T) {
+	db := open(t)
+	joined := time.Date(2026, 9, 9, 20, 0, 0, 0, time.UTC)
+
+	db.SessionOpened("a", model.Player{Name: "Huldra"}, joined)
+
+	closed, err := db.CloseStaleSessions(joined.Add(72 * time.Hour))
+	if err != nil {
+		t.Fatalf("CloseStaleSessions: %v", err)
+	}
+	if closed != 1 {
+		t.Errorf("closed %d sessions, want 1", closed)
+	}
+
+	got, _ := db.SessionsSince("a", joined.Add(-time.Hour))
+	if got[0].Open() {
+		t.Fatal("the stale session is still open")
+	}
+	if d := got[0].Duration(joined.Add(72 * time.Hour)); d != 0 {
+		t.Errorf("stale session lasted %v, want 0 — downtime is not playtime", d)
+	}
+}
+
+func TestPruneSessions(t *testing.T) {
+	db := open(t)
+	old := time.Date(2026, 9, 1, 20, 0, 0, 0, time.UTC)
+	recent := time.Date(2026, 9, 9, 20, 0, 0, 0, time.UTC)
+
+	db.SessionOpened("a", model.Player{Name: "Old"}, old)
+	db.SessionOpened("a", model.Player{Name: "Recent"}, recent)
+
+	n, err := db.PruneSessions(recent.Add(-24 * time.Hour))
+	if err != nil {
+		t.Fatalf("PruneSessions: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("pruned %d, want 1", n)
+	}
+	got, _ := db.SessionsSince("a", time.Time{})
+	if len(got) != 1 {
+		t.Errorf("got %d sessions after pruning, want 1", len(got))
+	}
+}

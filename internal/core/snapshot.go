@@ -110,16 +110,32 @@ type Server struct {
 	// rather than something a view should render.
 	netTotal int64
 
-	// Console is the recent output, oldest first and bounded. It is a tail
-	// rather than the full 16k-line ring DESIGN describes for the Console
-	// screen: a snapshot is copied on write, and the dashboard's log tail
-	// needs the last twenty lines rather than the last four hours. The full
-	// ring arrives with the Console view that needs it.
-	Console []model.Event
+	// Console is the server's recent output, oldest first and bounded to
+	// model.ConsoleCap. It shares its storage between snapshots rather than
+	// copying on write, which is what makes sixteen thousand lines
+	// affordable — see the note on model.Ring, which explains why that is
+	// safe here and would not be in general.
+	Console model.Ring
 
 	// Players is who is connected, as reconstructed from log events for the
 	// games that offer no roster endpoint.
 	Players []model.Player
+
+	// Backups is the server's archives, newest first, as last listed by the
+	// poller. Empty is ambiguous on purpose only until BackupsListed has
+	// run once — see BackupsKnown.
+	Backups []model.Archive
+
+	// Sessions is who has played recently, newest first, as far back as the
+	// tracker's window. Open sessions — players still connected — have a
+	// zero Left, which model.Session.Open reports.
+	Sessions []model.Session
+
+	// BackupsKnown says the poller has answered at least once, so an empty
+	// Backups means "none" rather than "not looked yet". A view that cannot
+	// tell those apart says "no backups" about a directory it has never
+	// read.
+	BackupsKnown bool
 
 	// connecting holds clients that have attached but not yet named
 	// themselves, oldest first. See the note on rosterApply.
@@ -271,6 +287,7 @@ const (
 	OpApply   Op = "apply"
 	OpUpdate  Op = "update"
 	OpBackup  Op = "backup"
+	OpRestore Op = "restore"
 )
 
 // Present is the progressive form, which is what a busy row says.
@@ -288,6 +305,8 @@ func (o Op) Present() string {
 		return "updating"
 	case OpBackup:
 		return "backing up"
+	case OpRestore:
+		return "restoring"
 	}
 	return ""
 }

@@ -30,9 +30,10 @@ import (
 // version of the struct, and a field renamed in code should not silently stop
 // reading a file somebody hand-edited.
 type Server struct {
-	Game  string `toml:"game"`
-	Image string `toml:"image,omitempty"`
-	Data  string `toml:"data,omitempty"`
+	Game    string `toml:"game"`
+	Image   string `toml:"image,omitempty"`
+	Data    string `toml:"data,omitempty"`
+	Address string `toml:"address,omitempty"`
 
 	Resources Resources      `toml:"resources,omitempty"`
 	Ports     []Port         `toml:"ports,omitempty"`
@@ -187,6 +188,7 @@ func (raw Server) instance(name string) (model.Instance, error) {
 		Game:      raw.Game,
 		Image:     raw.Image,
 		Data:      raw.Data,
+		Address:   raw.Address,
 		Resources: model.Resources{Memory: memory, CPUs: raw.Resources.CPUs},
 		Settings:  raw.Settings,
 	}
@@ -217,6 +219,7 @@ func fromInstance(inst model.Instance) Server {
 		Game:      inst.Game,
 		Image:     inst.Image,
 		Data:      inst.Data,
+		Address:   inst.Address,
 		Resources: Resources{Memory: FormatBytes(inst.Resources.Memory), CPUs: inst.Resources.CPUs},
 		Settings:  inst.Settings,
 	}

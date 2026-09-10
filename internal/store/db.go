@@ -106,6 +106,16 @@ var migrations = []string{
 		text     TEXT NOT NULL DEFAULT ''
 	)`,
 	`CREATE INDEX events_by_server ON events (server, at DESC)`,
+
+	`CREATE TABLE sessions (
+		id        INTEGER PRIMARY KEY AUTOINCREMENT,
+		server    TEXT NOT NULL,
+		player    TEXT NOT NULL,
+		steam_id  TEXT NOT NULL DEFAULT '',
+		joined_at INTEGER NOT NULL,
+		left_at   INTEGER
+	)`,
+	`CREATE INDEX sessions_by_server ON sessions (server, joined_at DESC)`,
 }
 
 func (d *DB) migrate() error {

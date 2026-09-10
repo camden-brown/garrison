@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/camden-brown/garrison/internal/host"
@@ -285,9 +286,6 @@ func lastAt(h model.History) time.Time {
 	return time.Time{}
 }
 
-// maxConsole bounds the per-server log tail carried in the snapshot.
-const maxConsole = 200
-
 // LogEventsRead is a batch of parsed lines from one container.
 //
 // A batch rather than a line because a crash-looping mod produces thousands a
@@ -307,7 +305,7 @@ func (m LogEventsRead) apply(s Snapshot) Snapshot {
 	s.At = m.At
 	return s.withServers(mapServer(s.Servers, m.Server, func(srv *Server) {
 		for _, ev := range m.Events {
-			srv.Console = appendConsole(srv.Console, ev)
+			srv.Console = srv.Console.Add(ev)
 			rosterApply(srv, ev)
 
 			if ev.Metric != "" {
@@ -407,21 +405,6 @@ func withoutID(ids []string, id string) []string {
 			out = append(out, existing)
 		}
 	}
-	return out
-}
-
-// appendConsole adds a line to the bounded tail, always allocating so a
-// snapshot already published keeps the slice it was given.
-func appendConsole(console []model.Event, ev model.Event) []model.Event {
-	if len(console) < maxConsole {
-		out := make([]model.Event, len(console)+1)
-		copy(out, console)
-		out[len(console)] = ev
-		return out
-	}
-	out := make([]model.Event, maxConsole)
-	copy(out, console[len(console)-maxConsole+1:])
-	out[maxConsole-1] = ev
 	return out
 }
 
@@ -674,4 +657,75 @@ func Reduce(s Snapshot, ms ...Mutation) Snapshot {
 		s = m.apply(s)
 	}
 	return s
+}
+
+// BackupsListed is the archive poller reporting what is on disk for one
+// server.
+//
+// It carries the whole list rather than a delta because that is what listing a
+// directory produces, and because archives change from outside Garrison: a
+// backup copied away by hand, or a directory restored from somewhere else,
+// should be reflected on the next poll rather than drifting until a restart.
+type BackupsListed struct {
+	At      time.Time
+	Server  string
+	Archive []model.Archive
+}
+
+func (m BackupsListed) apply(s Snapshot) Snapshot {
+	s.At = m.At
+	return s.withServers(mapServer(s.Servers, m.Server, func(srv *Server) {
+		// Newest first: a backups list is read from the top, and the one you
+		// want after a bad update is almost always the most recent.
+		sorted := make([]model.Archive, len(m.Archive))
+		copy(sorted, m.Archive)
+		sort.Slice(sorted, func(i, j int) bool { return sorted[i].Taken.After(sorted[j].Taken) })
+
+		srv.Backups = sorted
+		srv.BackupsKnown = true
+	}))
+}
+
+// SessionsListed is the player tracker reporting a server's recent history.
+//
+// Like BackupsListed it carries the whole window rather than a delta: the
+// tracker reads it back out of SQLite each time, so the snapshot and the
+// database cannot drift apart between them.
+type SessionsListed struct {
+	At       time.Time
+	Server   string
+	Sessions []model.Session
+}
+
+func (m SessionsListed) apply(s Snapshot) Snapshot {
+	s.At = m.At
+	return s.withServers(mapServer(s.Servers, m.Server, func(srv *Server) {
+		sorted := make([]model.Session, len(m.Sessions))
+		copy(sorted, m.Sessions)
+		sort.Slice(sorted, func(i, j int) bool { return sorted[i].Joined.After(sorted[j].Joined) })
+		srv.Sessions = sorted
+	}))
+}
+
+// InstanceAdded records a server the wizard just wrote.
+//
+// It is a separate mutation from InstancesLoaded because that one replaces the
+// whole set — reloading the directory to pick up one new file would drop the
+// draft settings and busy flags of every other server.
+type InstanceAdded struct {
+	At       time.Time
+	Instance model.Instance
+}
+
+func (m InstanceAdded) apply(s Snapshot) Snapshot {
+	s.At = m.At
+
+	byName := make(map[string]model.Instance, len(s.instances)+1)
+	for k, v := range s.instances {
+		byName[k] = v
+	}
+	byName[m.Instance.Name] = m.Instance
+	s.instances = byName
+
+	return s.withServers(merge(s, observedFrom(s.Servers)))
 }
