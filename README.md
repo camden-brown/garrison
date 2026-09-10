@@ -19,9 +19,10 @@
 </p>
 
 <p align="center">
-  <sub><b>Design mockup.</b> M0 is built — the Docker driver, the store and a working
-  Fleet view with start/stop — so the servers table above is real; the tiles, attention
-  pane and activity feed arrive with M1. See <a href="#roadmap">Roadmap</a>.</sub>
+  <sub><b>Design mockup.</b> The fleet view is built and so is everything around it —
+  the tiles, the attention pane and the activity feed all render from live containers.
+  What the mockup shows that reality does not is a fleet of four games: only Valheim
+  has a plugin so far. See <a href="#roadmap">Roadmap</a>.</sub>
 </p>
 
 ---
@@ -47,27 +48,38 @@ are written once and work the same for every game.
 - **Live dashboards** — CPU, memory and player sparklines at 1-second
   resolution, plus a fourth tile the game plugin supplies itself: zombies alive
   for Zomboid, world-save duration for Valheim.
-- **Console with RCON** — classified log lines (chat, joins, saves, errors) and
-  a command input that routes to RCON, to container stdin, or explains why
-  neither is available. Repeated lines collapse to a `3×` counter so a
-  crash-looping mod cannot erase your history.
+- **Console** — classified log lines (chat, joins, saves, errors) over a
+  16k-line ring, filterable by class or by text, with a day separator so
+  crossing midnight is visible. Repeated lines collapse to a `3×` counter so a
+  crash-looping mod cannot erase your history. *The command input is designed
+  and not built:* nothing implements RCON yet, so the screen explains its
+  absence rather than offering a box that drops what you type.
 - **Player tracking** — who is on now, seven days of sessions, and occupancy by
   hour so you can pick a restart window that bothers nobody.
-- **Mod management** — load order that you can actually reorder, version and
-  update checks, conflict detection, and correlation between a mod's changelog
-  and the errors in your log.
-- **A real task engine** — restarts, updates, mod syncs and backups are durable
-  step sequences with declared rollback. A scheduled restart warns players,
-  saves, snapshots the volume, updates, and restores the snapshot if the
-  healthcheck fails.
+- **Mods** — the configured load order, numbered only for games where order
+  means something. *Reordering, update checks and conflict detection are not
+  built:* the plugin interface is designed around mods a server downloads from
+  its own config, and the only game implemented has none.
+- **A real task engine** — restarts, updates, backups and restores are durable
+  step sequences with declared rollback, and a cron scheduler with two policies
+  for what a due job does when people are playing. A restore archives the world
+  it is about to replace and unwinds to it if anything fails. *Drain is not
+  built:* warning players before a shutdown needs a channel to warn them on,
+  and the only game implemented has none.
 - **Schema-driven settings** — a form generated from the game plugin's own
   field list, with impact badges (live / restart / recreate / wipe risk) and a
-  literal config-file diff before anything is written.
-- **A provisioner** — a wizard that turns "a game plus a name" into a running,
-  port-mapped, volume-backed server. Ports are proposed by scanning the live
-  fleet, so your second Valheim server does not collide with the first.
+  confirmation for anything that costs more than a file write. Valheim's world
+  modifiers come from a vocabulary read out of the game's own assembly, so a
+  value the server would silently ignore cannot be offered. *The literal
+  config-file diff is not built.*
+- **A provisioner** — a wizard that turns "a game plus a name" into a
+  configured, port-mapped server, ready for one keypress to build and start.
+  Ports are proposed by scanning the live fleet, so your second Valheim server
+  does not collide with the first.
 - **Ambient mode** — drops the chrome, enlarges everything to a card per
-  server, slows refresh to 5 seconds. For the window you never close.
+  server. For the window you never close.
+- **Share** — one key copies a server's join address, password and world to the
+  clipboard, for posting to the people who want to join.
 
 ### What it is not
 
@@ -124,8 +136,8 @@ daemon is restarting.
 ```console
 garrison                          # open the TUI
 garrison status                   # one-line summary of every server
-garrison restart zomboid-main --drain 15m
-garrison backup zomboid-main --keep 14
+garrison restart valheim-main     # waits for the task, exits on its result
+garrison backup valheim-main
 ```
 
 The implemented commands are `garrison` (the TUI), `garrison status`,
@@ -189,8 +201,13 @@ drain  = "15m"
 policy = "skip-if-occupied"
 ```
 
-Passwords do not go here — they live in Windows Credential Manager under
-`garrison/<instance>/<key>`, so this directory is safe to sync or commit.
+**Passwords go here too, in plain text, and that is not the intent.** DESIGN
+puts them in Windows Credential Manager under `garrison/<instance>/<key>`,
+which is what would make this directory safe to sync — but that store is not
+built. The settings form refuses to type a password rather than write one here
+behind a masked field, so a secret in this file is one you put there
+knowingly. Treat the directory as secret, and do not commit it. See
+[ADR 0009](docs/decisions/0009-secrets-stay-in-the-config-file-for-now.md).
 
 ## Keybindings
 
@@ -202,37 +219,52 @@ the same thing in every view or it does not exist. Lowercase is safe;
 | --- | --- |
 | <kbd>1</kbd>–<kbd>7</kbd> | Dashboard, Console, Players, Mods, Settings, Tasks, Backups |
 | <kbd>f</kbd> | Fleet view |
-| <kbd>[</kbd> <kbd>]</kbd> | Previous / next server, keeping the current view |
-| <kbd>Ctrl</kbd>+<kbd>P</kbd> | Fuzzy palette over servers, views and verbs |
-| <kbd>:</kbd> | Command line — `:drain 15m`, `:mods add <id>` |
-| <kbd>/</kbd> | Filter the current view |
 | <kbd>Tab</kbd> | Cycle focus: servers → views → stage |
-| <kbd>u</kbd> / <kbd>S</kbd> | Start / stop |
-| <kbd>r</kbd> / <kbd>U</kbd> | Restart (offers a drain) / update |
-| <kbd>b</kbd> / <kbd>B</kbd> | Backup now / restore |
+| <kbd>Ctrl</kbd>+<kbd>P</kbd> | Palette over servers, views and verbs |
+| <kbd>:</kbd> | Command line — `:stop valheim-main`, and the other verbs |
+| <kbd>/</kbd> | Filter the current view — fleet and console have one |
 | <kbd>y</kbd> | Copy the server's join details — address, password, world — to the clipboard |
-| <kbd>n</kbd> / <kbd>X</kbd> | New server wizard / delete server |
+| <kbd>n</kbd> | New server wizard |
 | <kbd>F</kbd> | Ambient mode |
-| <kbd>Space</kbd> | Freeze auto-refresh and log follow |
-| <kbd>?</kbd> | Help overlay, generated from the live keymap |
+| <kbd>?</kbd> | Help overlay, generated from each view's own keymap |
+| <kbd>u</kbd> / <kbd>S</kbd> | Start / stop |
+| <kbd>r</kbd> / <kbd>U</kbd> | Restart / update |
+| <kbd>b</kbd> / <kbd>B</kbd> | Backup now / restore — <kbd>B</kbd> asks for the server's name in full |
+| <kbd>Space</kbd> | Freeze the console; toggle a setting on the settings form |
+
+Designed and not bound yet: <kbd>[</kbd> <kbd>]</kbd> to step between servers
+keeping the current view, and <kbd>X</kbd> to delete one. Press <kbd>?</kbd>
+in the app for the list that is generated from the code rather than typed
+here — it cannot drift.
 
 ## Supported games
 
-The point of the table is the ragged right-hand side. These games agree on
-almost nothing, and the UI does not care.
+**Valheim is the only plugin so far.** The other two are what the interfaces
+were designed against, and the point of the table is the ragged right-hand
+side: these games agree on almost nothing, and the UI does not care.
 
-| | Zomboid | Valheim | Palworld |
+| | Valheim | Zomboid | Palworld |
 | --- | :-: | :-: | :-: |
-| Steam app id | `380870` | `896660` | `2394010` |
-| Player list | RCON | log-derived | REST API |
-| Console | RCON | — | RCON |
-| Graceful drain | ✅ | partial | ✅ |
-| Mods | Workshop | Thunderstore | — |
-| Config files written | 2 | 0 (env) | 1 |
+| | **built** | *planned* | *planned* |
+| Steam app id | `896660` | `380870` | `2394010` |
+| Player list | log-derived | RCON | REST API |
+| Console | — | RCON | RCON |
+| Graceful drain | — | ✅ | ✅ |
+| Mods | Thunderstore | Workshop | — |
+| Config files written | 0 (env) | 2 | 1 |
 
-A game implementing none of the optional capabilities still gets a dashboard,
-console, settings, tasks and backups — it just gets a Players view that
-explains itself instead of an empty table.
+Valheim was deliberately first because of that first column of dashes. It has
+no RCON, so player state had to be reconstructed from log lines rather than
+asked for; it writes no config files, so `Compile` had to handle returning
+none from day one. A design built against a game that could answer everything
+would have quietly assumed it could.
+
+The dashes are also load-bearing in the UI. A game implementing none of the
+optional capabilities still gets a dashboard, console, settings, tasks and
+backups — the screens that need a capability it lacks explain themselves in
+that game's own terms instead of showing an empty table. That is why the Mods
+screen currently says Valheim has no mod system Garrison can manage, and the
+Console says it has nothing to send commands over.
 
 ## Architecture
 
@@ -268,7 +300,7 @@ builds one.
 | A game | `internal/games/<name>/` + a line in `games/all.go` | any view, the task engine, the settings form |
 | A view | `internal/tui/views/<name>/` + a line in `views/all.go` | the shell, the rail, the keymap overlay |
 | A task kind | a `Kind` and a `[]Step` builder | progress, cancellation, persistence, lanes |
-| A setting | one `games.Field` in that game's `Schema()` | the form, validation, the diff, the confirm modal |
+| A setting | one `games.Field` in that game's `Schema()` | the form, validation, the impact badge, the confirm modal |
 | A metric | `model.Event{Metric, Value}` from `Parse` | the metric rings, the sparkline, the tile |
 | A runtime | one `host.Driver` implementation | everything above `internal/host` |
 
@@ -316,13 +348,14 @@ fake encodes match the thing it stands in for.
 | **M0** ✅ | Driver and fleet list | `host.Driver` over the named pipe, the store, start/stop. Named pipe verified against Docker Desktop; the render loop still wants an hour on Windows hardware. |
 | **M1** ✅ | Live truth | Stats and log streaming, the dashboard with sparklines, Valheim behind the `Game` interface. |
 | **M2** ✅ | Task engine | Lanes, steps, compensation, SQLite persistence, the Tasks view. Restart, backup, update, restore and the scheduler, plus the Console and Backups screens over them. |
-| **M3** ◐ | Second game | The settings form and apply are built against Valheim. Zomboid — two config syntaxes, RCON, Workshop mods with load order — is next. |
-| **M4** | Players and mods | Session history, occupancy, the Mods view. Palworld as the third game. |
-| **M5** | Provisioning and polish | The wizard, restore, ambient mode, command palette, CLI subcommands, 80-column layouts. |
+| **M3** ◐ | Second game | Built: the settings form and apply, with Valheim's world modifiers read out of the game's own assembly. Outstanding: Zomboid — two config syntaxes, RCON, Workshop mods with load order — which is the real test of whether `Schema` and `Compile` were right. |
+| **M4** ◐ | Players and mods | Built: the Players view — live roster, seven days of sessions, occupancy by hour. Mods lists what is configured; managing it needs a game whose mods are declared in config. Palworld not started. |
+| **M5** ◐ | Provisioning and polish | Built: the wizard with port scanning, restore, ambient mode, the palette, the `/` filter, the `:` command line, CLI subcommands, the `?` help overlay and 80-column layouts. |
 
-Valheim goes first deliberately: it is the simplest plugin and it has **no
-RCON**, which forces log-derived player state early rather than letting the
-design assume RCON exists.
+Milestones are marked ◐ where the screens and plumbing landed but the game
+that would exercise them has not. Three of the six outstanding debts —
+the console's command input, drain, and the roster's name pairing — are all
+waiting on the same thing: a game with a channel to talk to its server on.
 
 ## Contributing
 
