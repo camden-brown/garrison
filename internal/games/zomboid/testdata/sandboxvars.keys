@@ -1,0 +1,279 @@
+# SandboxVars — every sandbox setting, with the game's own default.
+#
+# Defaults are extracted from the game's own Apocalypse preset,
+# media/lua/shared/Sandbox/Apocalypse.lua, which is what the server means by
+# "default". The enum labels come from the comments the server writes into a
+# generated servertest_SandboxVars.lua, where each graded setting documents
+# its own numbering.
+#
+# Format: key<TAB>type<TAB>default<TAB>option;option;... (options optional)
+# Keys are dotted where the Lua table nests.
+Version	int	6	
+Zombies	int	4	1=Insane;2=Very High;3=High;4=Normal;5=Low;6=None
+Distribution	int	1	1=Urban Focused;2=Uniform
+ZombieVoronoiNoise	bool	true	
+ZombieRespawn	int	4	1=High;2=Normal;3=Low;4=None
+ZombieMigrate	bool	true	
+DayLength	int	4	1=15 Minutes;2=30 Minutes;3=1 Hour;4=1 Hour, 30 Minutes;5=2 Hours;6=3 Hours;7=4 Hours;8=5 Hours;9=6 Hours;10=7 Hours;11=8 Hours;12=9 Hours;13=10 Hours;14=11 Hours;15=12 Hours;16=13 Hours;17=14 Hours;18=15 Hours;19=16 Hours;20=17 Hours;21=18 Hours;22=19 Hours;23=20 Hours;24=21 Hours;25=22 Hours;26=23 Hours;27=Real-time
+StartYear	int	1	
+StartMonth	int	7	1=January;2=February;3=March;4=April;5=May;6=June;7=July;8=August;9=September;10=October;11=November;12=December
+StartDay	int	9	
+StartTime	int	2	1=7 AM;2=9 AM;3=12 PM;4=2 PM;5=5 PM;6=9 PM;7=12 AM;8=2 AM;9=5 AM
+DayNightCycle	int	1	1=Normal;2=Endless Day;3=Endless Night
+ClimateCycle	int	1	1=Normal;2=No Weather;3=Endless Rain;4=Endless Storm;5=Endless Snow;6=Endless Blizzard
+FogCycle	int	1	1=Normal;2=No Fog;3=Endless Fog
+WaterShut	int	2	1=Instant;2=0 - 30 Days;3=0 - 2 Months;4=0 - 6 Months;5=0 - 1 Year;6=0 - 5 Years;7=2 - 6 Months;8=6 - 12 Months;9=Disabled
+ElecShut	int	2	1=Instant;2=14 - 30 Days;3=14 Days - 2 Months;4=14 Days - 6 Months;5=14 Days - 1 Year;6=14 Days - 5 Years;7=2 - 6 Months;8=6 - 12 Months;9=Disabled
+AlarmDecay	int	2	1=Instant;2=0 - 30 Days;3=0 - 2 Months;4=0 - 6 Months;5=0 - 1 Year;6=0 - 5 Years
+WaterShutModifier	int	14	
+ElecShutModifier	int	14	
+AlarmDecayModifier	int	14	
+FoodLootNew	float	0.8	
+LiteratureLootNew	float	0.6	
+SkillBookLoot	float	0.6	
+RecipeResourceLoot	float	0.6	
+MedicalLootNew	float	0.6	
+SurvivalGearsLootNew	float	0.6	
+CannedFoodLootNew	float	0.6	
+WeaponLootNew	float	0.6	
+RangedWeaponLootNew	float	1.2	
+AmmoLootNew	float	0.6	
+MechanicsLootNew	float	0.6	
+OtherLootNew	float	0.8	
+ClothingLootNew	float	0.6	
+ContainerLootNew	float	0.6	
+KeyLootNew	float	0.4	
+MediaLootNew	float	0.6	
+MementoLootNew	float	0.6	
+CookwareLootNew	float	0.6	
+MaterialLootNew	float	0.6	
+FarmingLootNew	float	0.6	
+ToolLootNew	float	0.6	
+RollsMultiplier	float	1.0	
+RemoveStoryLoot	bool	false	
+RemoveZombieLoot	bool	false	
+ZombiePopLootEffect	int	0	
+InsaneLootFactor	float	0.05	
+ExtremeLootFactor	float	0.2	
+RareLootFactor	float	0.6	
+NormalLootFactor	float	1.0	
+CommonLootFactor	float	2.0	
+AbundantLootFactor	float	3.0	
+Temperature	int	3	1=Very Cold;2=Cold;3=Normal;4=Hot;5=Very Hot
+Rain	int	3	1=Very Dry;2=Dry;3=Normal;4=Rainy;5=Very Rainy
+ErosionSpeed	int	4	1=Very Fast (20 Days);2=Fast (50 Days);3=Normal (100 Days);4=Slow (200 Days);5=Very Slow (500 Days)
+ErosionDays	int	0	
+Farming	int	3	1=Very Fast;2=Fast;3=Normal;4=Slow;5=Very Slow
+CompostTime	int	2	1=1 Week;2=2 Weeks;3=3 Weeks;4=4 Weeks;5=6 Weeks;6=8 Weeks;7=10 Weeks;8=12 Weeks
+StatsDecrease	int	3	1=Very Fast;2=Fast;3=Normal;4=Slow;5=Very Slow
+NatureAbundance	int	3	1=Very Poor;2=Poor;3=Normal;4=Abundant;5=Very Abundant
+Alarm	int	4	1=Never;2=Extremely Rare;3=Rare;4=Sometimes;5=Often;6=Very Often
+LockedHouses	int	6	1=Never;2=Extremely Rare;3=Rare;4=Sometimes;5=Often;6=Very Often
+StarterKit	bool	false	
+Nutrition	bool	true	
+FoodRotSpeed	int	3	1=Very Fast;2=Fast;3=Normal;4=Slow;5=Very Slow
+FridgeFactor	int	3	1=Very Low;2=Low;3=Normal;4=High;5=Very High;6=No decay
+SeenHoursPreventLootRespawn	int	0	
+HoursForLootRespawn	int	0	
+MaxItemsForLootRespawn	int	5	
+ConstructionPreventsLootRespawn	bool	true	
+WorldItemRemovalList	string	"Base.Hat, Base.Glasses, Base.Maggots, Base.Slug, Base.Slug2, Base.Snail, Base.Worm, Base.Dung_Mouse, Base.Dung_Rat"	
+HoursForWorldItemRemoval	float	24.0	
+ItemRemovalListBlacklistToggle	bool	false	
+TimeSinceApo	int	1	1=0;2=1;3=2;4=3;5=4;6=5;7=6;8=7;9=8;10=9;11=10;12=11;13=12
+PlantResilience	int	3	1=Very High;2=High;3=Normal;4=Low;5=Very Low
+PlantAbundance	int	3	1=Very Poor;2=Poor;3=Normal;4=Abundant;5=Very Abundant
+EndRegen	int	3	1=Very Fast;2=Fast;3=Normal;4=Slow;5=Very Slow
+Helicopter	int	2	1=Never;2=Once;3=Sometimes;4=Often
+MetaEvent	int	2	1=Never;2=Sometimes;3=Often
+SleepingEvent	int	1	1=Never;2=Sometimes;3=Often
+GeneratorFuelConsumption	float	0.1	
+GeneratorSpawning	int	4	1=None (not recommended);2=Insanely Rare;3=Extremely Rare;4=Rare;5=Normal;6=Common;7=Abundant
+AnnotatedMapChance	int	4	1=Never;2=Extremely Rare;3=Rare;4=Sometimes;5=Often;6=Very Often
+CharacterFreePoints	int	0	
+ConstructionBonusPoints	int	3	1=Very Low;2=Low;3=Normal;4=High;5=Very High
+NightDarkness	int	3	1=Pitch Black;2=Dark;3=Normal;4=Bright
+NightLength	int	3	1=Always Night;2=Long;3=Normal;4=Short;5=Always Day
+BoneFracture	bool	true	
+InjurySeverity	int	2	1=Low;2=Normal;3=High
+HoursForCorpseRemoval	float	216.0	
+DecayingCorpseHealthImpact	int	3	1=None;2=Low;3=Normal;4=High;5=Insane
+ZombieHealthImpact	bool	false	
+BloodLevel	int	3	1=None;2=Low;3=Normal;4=High;5=Ultra Gore
+ClothingDegradation	int	3	1=Disabled;2=Slow;3=Normal;4=Fast
+FireSpread	bool	true	
+DaysForRottenFoodRemoval	int	-1	
+AllowExteriorGenerator	bool	true	
+MaxFogIntensity	int	1	1=Normal;2=Moderate;3=Low;4=None
+MaxRainFxIntensity	int	1	1=Normal;2=Moderate;3=Low
+EnableSnowOnGround	bool	true	
+AttackBlockMovements	bool	true	
+SurvivorHouseChance	int	3	1=Never;2=Extremely Rare;3=Rare;4=Sometimes;5=Often;6=Very Often;7=Always Tries
+VehicleStoryChance	int	3	1=Never;2=Extremely Rare;3=Rare;4=Sometimes;5=Often;6=Very Often;7=Always Tries
+ZoneStoryChance	int	3	1=Never;2=Extremely Rare;3=Rare;4=Sometimes;5=Often;6=Very Often;7=Always Tries
+AllClothesUnlocked	bool	false	
+EnableTaintedWaterText	bool	true	
+EnableVehicles	bool	true	
+CarSpawnRate	int	3	1=None;2=Very Low;3=Low;4=Normal;5=High
+ZombieAttractionMultiplier	float	1.0	
+VehicleEasyUse	bool	false	
+InitialGas	int	2	1=Very Low;2=Low;3=Normal;4=High;5=Very High;6=Full
+FuelStationGasInfinite	bool	false	
+FuelStationGasMin	float	0.0	
+FuelStationGasMax	float	0.8	
+FuelStationGasEmptyChance	int	20	
+LockedCar	int	4	1=Never;2=Extremely Rare;3=Rare;4=Sometimes;5=Often;6=Very Often
+CarGasConsumption	float	1.0	
+CarGeneralCondition	int	3	1=Very Low;2=Low;3=Normal;4=High;5=Very High
+CarDamageOnImpact	int	3	1=Very Low;2=Low;3=Normal;4=High;5=Very High
+DamageToPlayerFromHitByACar	int	1	1=None;2=Low;3=Normal;4=High;5=Very High
+TrafficJam	bool	true	
+CarAlarm	int	3	1=Never;2=Extremely Rare;3=Rare;4=Sometimes;5=Often;6=Very Often
+PlayerDamageFromCrash	bool	true	
+SirenShutoffHours	float	0.0	
+ChanceHasGas	int	2	1=Low;2=Normal;3=High
+RecentlySurvivorVehicles	int	2	1=None;2=Low;3=Normal;4=High
+MultiHitZombies	bool	false	
+RearVulnerability	int	3	1=Low;2=Medium;3=High
+SirenEffectsZombies	bool	true	
+AnimalStatsModifier	int	4	1=Ultra Fast;2=Very Fast;3=Fast;4=Normal;5=Slow;6=Very Slow
+AnimalMetaStatsModifier	int	4	1=Ultra Fast;2=Very Fast;3=Fast;4=Normal;5=Slow;6=Very Slow
+AnimalPregnancyTime	int	4	1=Ultra Fast;2=Very Fast;3=Fast;4=Normal;5=Slow;6=Very Slow
+AnimalAgeModifier	int	4	1=Ultra Fast;2=Very Fast;3=Fast;4=Normal;5=Slow;6=Very Slow
+AnimalMilkIncModifier	int	4	1=Ultra Fast;2=Very Fast;3=Fast;4=Normal;5=Slow;6=Very Slow
+AnimalWoolIncModifier	int	4	1=Ultra Fast;2=Very Fast;3=Fast;4=Normal;5=Slow;6=Very Slow
+AnimalRanchChance	int	5	1=Never;2=Extremely Rare;3=Rare;4=Sometimes;5=Often;6=Very Often;7=Always
+AnimalGrassRegrowTime	int	240	
+AnimalMetaPredator	bool	false	
+AnimalMatingSeason	bool	true	
+AnimalEggHatch	int	4	1=Ultra Fast;2=Very Fast;3=Fast;4=Normal;5=Slow;6=Very Slow
+AnimalSoundAttractZombies	bool	true	
+AnimalTrackChance	int	4	1=Never;2=Extremely Rare;3=Rare;4=Sometimes;5=Often;6=Very Often
+AnimalPathChance	int	4	1=Never;2=Extremely Rare;3=Rare;4=Sometimes;5=Often;6=Very Often
+MaximumRatIndex	int	25	
+DaysUntilMaximumRatIndex	int	90	
+MetaKnowledge	int	3	1=Fully revealed;2=Shown as ???;3=Completely hidden
+SeeNotLearntRecipe	bool	true	
+MaximumLootedBuildingRooms	int	50	
+EnablePoisoning	int	1	1=True;2=False;3=Only bleach poisoning is disabled
+MaggotSpawn	int	1	1=In and Around Bodies;2=In Bodies Only;3=Never
+LightBulbLifespan	float	2.0	
+FishAbundance	int	2	1=Very Poor;2=Poor;3=Normal;4=Abundant;5=Very Abundant
+LevelForMediaXPCutoff	int	3	
+LevelForDismantleXPCutoff	int	0	
+BloodSplatLifespanDays	int	0	
+LiteratureCooldown	int	45	
+NegativeTraitsPenalty	int	1	1=None;2=1 point penalty for every 3 negative traits selected;3=1 point penalty for every 2 negative traits selected;4=1 point penalty for every negative trait selected after the first
+MinutesPerPage	float	2.0	
+KillInsideCrops	bool	true	
+PlantGrowingSeasons	bool	true	
+PlaceDirtAboveground	bool	false	
+FarmingSpeedNew	float	1.0	
+FarmingAmountNew	float	1.0	
+MaximumLooted	int	25	
+DaysUntilMaximumLooted	int	90	
+RuralLooted	float	0.5	
+MaximumDiminishedLoot	int	20	
+DaysUntilMaximumDiminishedLoot	int	3650	
+MuscleStrainFactor	float	0.7	
+DiscomfortFactor	float	0.8	
+WoundInfectionFactor	float	1.0	
+NoBlackClothes	bool	true	
+EasyClimbing	bool	false	
+MaximumFireFuelHours	int	8	
+FirearmUseDamageChance	int	2	1=Disabled;2=Zombies only;3=All types of target
+FirearmNoiseMultiplier	float	1.0	
+FirearmJamMultiplier	float	1.0	
+FirearmMoodleMultiplier	float	1.0	
+FirearmWeatherMultiplier	float	1.0	
+FirearmHeadGearEffect	bool	true	
+ClayLakeChance	float	0.05	
+ClayRiverChance	float	0.05	
+GeneratorTileRange	int	20	
+GeneratorVerticalPowerRange	int	3	
+Basement.SpawnFrequency	int	4	1=Never;2=Extremely Rare;3=Rare;4=Sometimes;5=Often;6=Very Often;7=Always
+Map.AllowMiniMap	bool	false	
+Map.AllowWorldMap	bool	true	
+Map.MapAllKnown	bool	false	
+Map.MapNeedsLight	bool	true	
+ZombieLore.Speed	int	4	1=Sprinters;2=Fast Shamblers;3=Shamblers;4=Random
+ZombieLore.SprinterPercentage	int	0	
+ZombieLore.Strength	int	2	1=Superhuman;2=Normal;3=Weak;4=Random
+ZombieLore.Toughness	int	4	1=Tough;2=Normal;3=Fragile;4=Random
+ZombieLore.Transmission	int	1	1=Blood and Saliva;2=Saliva Only;3=Everyone's Infected;4=None
+ZombieLore.Mortality	int	5	1=Instant;2=0-30 Seconds;3=0-1 Minutes;4=0-12 Hours;5=2-3 Days;6=1-2 Weeks;7=Never
+ZombieLore.Reanimate	int	3	1=Instant;2=0-30 Seconds;3=0-1 Minutes;4=0-12 Hours;5=2-3 Days;6=1-2 Weeks
+ZombieLore.Cognition	int	3	1=Navigate and Use Doors;2=Navigate;3=Basic Navigation;4=Random
+ZombieLore.DoorOpeningPercentage	int	0	
+ZombieLore.CrawlUnderVehicle	int	5	1=Crawlers Only;2=Extremely Rare;3=Rare;4=Sometimes;5=Often;6=Very Often;7=Always
+ZombieLore.Memory	int	2	1=Long;2=Normal;3=Short;4=None;5=Random;6=Random between Normal and None
+ZombieLore.Sight	int	5	1=Eagle;2=Normal;3=Poor;4=Random;5=Random between Normal and Poor
+ZombieLore.Hearing	int	5	1=Pinpoint;2=Normal;3=Poor;4=Random;5=Random between Normal and Poor
+ZombieLore.SpottedLogic	bool	true	
+ZombieLore.ThumpNoChasing	bool	false	
+ZombieLore.ThumpOnConstruction	bool	true	
+ZombieLore.ActiveOnly	int	1	1=Both;2=Night;3=Day
+ZombieLore.TriggerHouseAlarm	bool	true	
+ZombieLore.ZombiesDragDown	bool	true	
+ZombieLore.ZombiesCrawlersDragDown	bool	false	
+ZombieLore.ZombiesFenceLunge	bool	true	
+ZombieLore.ZombiesArmorFactor	float	2.0	
+ZombieLore.ZombiesMaxDefense	int	85	
+ZombieLore.ChanceOfAttachedWeapon	int	6	
+ZombieLore.ZombiesFallDamage	float	1.0	
+ZombieLore.DisableFakeDead	int	1	1=World Zombies;2=World and Combat Zombies;3=Never
+ZombieLore.PlayerSpawnZombieRemoval	int	1	1=Inside the building and around it;2=Inside the building;3=Inside the room;4=Zombies can spawn anywhere
+ZombieLore.FenceThumpersRequired	int	25	
+ZombieLore.FenceDamageMultiplier	float	1.0	
+ZombieConfig.PopulationMultiplier	float	0.65	
+ZombieConfig.PopulationStartMultiplier	float	1.0	
+ZombieConfig.PopulationPeakMultiplier	float	1.5	
+ZombieConfig.PopulationPeakDay	int	28	
+ZombieConfig.RespawnHours	float	0.0	
+ZombieConfig.RespawnUnseenHours	float	0.0	
+ZombieConfig.RespawnMultiplier	float	0.0	
+ZombieConfig.RedistributeHours	float	12.0	
+ZombieConfig.FollowSoundDistance	int	100	
+ZombieConfig.RallyGroupSize	int	20	
+ZombieConfig.RallyGroupSizeVariance	int	50	
+ZombieConfig.RallyTravelDistance	int	20	
+ZombieConfig.RallyGroupSeparation	int	15	
+ZombieConfig.RallyGroupRadius	int	3	
+ZombieConfig.ZombiesCountBeforeDelete	int	300	
+MultiplierConfig.Global	float	1.0	
+MultiplierConfig.GlobalToggle	bool	true	
+MultiplierConfig.Fitness	float	1.0	
+MultiplierConfig.Strength	float	1.0	
+MultiplierConfig.Sprinting	float	1.0	
+MultiplierConfig.Lightfoot	float	1.0	
+MultiplierConfig.Nimble	float	1.0	
+MultiplierConfig.Sneak	float	1.0	
+MultiplierConfig.Axe	float	1.0	
+MultiplierConfig.Blunt	float	1.0	
+MultiplierConfig.SmallBlunt	float	1.0	
+MultiplierConfig.LongBlade	float	1.0	
+MultiplierConfig.SmallBlade	float	1.0	
+MultiplierConfig.Spear	float	1.0	
+MultiplierConfig.Maintenance	float	1.0	
+MultiplierConfig.Woodwork	float	1.0	
+MultiplierConfig.Cooking	float	1.0	
+MultiplierConfig.Farming	float	1.0	
+MultiplierConfig.Doctor	float	1.0	
+MultiplierConfig.Electricity	float	1.0	
+MultiplierConfig.MetalWelding	float	1.0	
+MultiplierConfig.Mechanics	float	1.0	
+MultiplierConfig.Tailoring	float	1.0	
+MultiplierConfig.Aiming	float	1.0	
+MultiplierConfig.Reloading	float	1.0	
+MultiplierConfig.Fishing	float	1.0	
+MultiplierConfig.Trapping	float	1.0	
+MultiplierConfig.PlantScavenging	float	1.0	
+MultiplierConfig.FlintKnapping	float	1.0	
+MultiplierConfig.Masonry	float	1.0	
+MultiplierConfig.Pottery	float	1.0	
+MultiplierConfig.Carving	float	1.0	
+MultiplierConfig.Husbandry	float	1.0	
+MultiplierConfig.Tracking	float	1.0	
+MultiplierConfig.Blacksmith	float	1.0	
+MultiplierConfig.Butchering	float	1.0	
+MultiplierConfig.Glassmaking	float	1.0	

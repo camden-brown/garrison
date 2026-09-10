@@ -1,0 +1,159 @@
+# servertest.ini — every key the Project Zomboid dedicated server writes.
+#
+# Extracted from a real server's generated config: Project Zomboid Dedicated
+# Server (Steam app 380870), config written by the server itself, read from
+# %USERPROFILE%\Zomboid\Server\servertest.ini.
+#
+# Why this file exists: Compile writes this file whole, so a key Garrison does
+# not know about is a key Garrison would delete. The list has to be complete
+# rather than curated, and it has to come from the server rather than from
+# documentation — see ADR 0008 and ADR 0011.
+#
+# Values for anything password- or id-shaped are blanked deliberately: this is
+# a real operator's file and the repo is not the place for their secrets.
+#
+# Format: key<TAB>type<TAB>default
+PVP	bool	true
+PVPLogToolChat	bool	true
+PVPLogToolFile	bool	true
+PauseEmpty	bool	true
+GlobalChat	bool	true
+ChatStreams	string	s,r,a,w,y,sh,f,all
+Open	bool	true
+ServerWelcomeMessage	string	Welcome to Project Zomboid Multiplayer! <LINE> <LINE> To interact with the Chat panel: press Tab, T, or Enter. <LINE> <LINE> The Tab key will change the target stream of the message. <LINE> <LINE> Global Streams: /all <LINE> Local Streams: /say, /yell <LINE> Special Steams: /whisper, /safehouse, /faction. <LINE> <LINE> Press the Up arrow to cycle through your message history. Click the Gear icon to customize chat. <LINE> <LINE> Happy surviving!
+DisplayUserName	bool	true
+ShowFirstAndLastName	bool	false
+UsernameDisguises	bool	false
+HideDisguisedUserName	bool	false
+SwitchZombiesOwnershipEachUpdate	bool	false
+SpawnPoint	string	0,0,0
+SafetySystem	bool	true
+ShowSafety	bool	true
+SafetyToggleTimer	int	2
+SafetyCooldownTimer	int	3
+SafetyDisconnectDelay	int	60
+SpawnItems	string	
+DefaultPort	int	16261
+UDPPort	int	16262
+ResetID	int	1987082
+Mods	string	BetterSortCC;P4HasBeenRead;ChuckleberryFinnAlertSystem;errorMagnifier;SkillRecoveryJournal;MapLegendUI;ProximityInventory;KillCount;CombatText;RainCleansBlood;RepairAnyClothes;MapSymbolSizeSlider;SwapIt;manageContainers;P4TidyUpMeister;UnifiedCarryWeightFramework;1299328280/ToadTraits;VehicleRepairOverhaul;MoreBuilds;FH;Authentic Z - Current;RiskyInspectWeapon;HBVCEFb42;ReloadAllMagazines;damnlib;isoContainers;KI5trailers;NoLighterNeeded;NeatUI_Framework;Project_Cook;FunctionalAppliances2;VanillaFoodsExpanded;BLTAnnotations;TreesHaveLoot;TotalWeightRebalance;92amgeneralM998;92amgeneralM998extra;86oshkoshP19A;82oshkoshM911;78amgeneralM35A2;78amgeneralM35A2extra;78amgeneralM49A2C;78amgeneralM50A3;78amgeneralM62;91range;92nissanGTR;70dodge;67commando;83amgeneralM923;83amgeneralM923extra;84merc;97bushmaster;88chevyS10;82jeepJ10;82jeepJ10t;86fordE150;86fordE150dnd;86fordE150expanded;86fordE150mm;86fordE150pd;92fordCVPI;90fordF350ambulance;90pierceArrow;89fordBronco;67gt500;87fordB700;69camaro;93fordF350;89trooper;49powerWagon;70barracuda;63beetle;69mini;69mini_ItalianJob;69mini_MrBean;69mini_PitbullSpecial;90bmwE30;59meteor;ECTO1;93townCar;EQUIPMENT_UI;SWMG;GunsOfMarz;hf_point_blank;SimpleSilencers;AutoReload;Run and Reload;Buttstroke;TacHold Complete;ammomaker;HBAC;AmmoLootDropB42;AliceGear;alicesWeaponSling;alicesWeaponSlingRadialMenu;Military_Tool_Kit;BCGTools;BCGRareWeapons
+Map	string	Muldraugh, KY
+DoLuaChecksum	bool	false
+DenyLoginOnOverloadedServer	bool	true
+Public	bool	false
+PublicName	string	Camden's Zomboid Server
+PublicDescription	string	Private server - password required
+MaxPlayers	int	8
+PingLimit	int	0
+SafehousePreventsLootRespawn	bool	true
+DropOffWhiteListAfterDeath	bool	false
+NoFire	bool	false
+AnnounceDeath	bool	false
+AnnounceAnimalDeath	bool	false
+SaveWorldEveryMinutes	int	15
+PlayerSafehouse	bool	false
+AdminSafehouse	bool	false
+SafehouseAllowTrepass	bool	true
+SafehouseAllowFire	bool	true
+SafehouseAllowLoot	bool	true
+SafehouseAllowRespawn	bool	false
+SafehouseDaySurvivedToClaim	int	0
+SafeHouseRemovalTime	int	144
+SafehouseAllowNonResidential	bool	false
+SafehouseDisableDisguises	bool	true
+MaxSafezoneSize	int	20000
+AllowDestructionBySledgehammer	bool	true
+SledgehammerOnlyInSafehouse	bool	false
+War	bool	false
+WarStartDelay	int	600
+WarDuration	int	3600
+WarSafehouseHitPoints	int	3
+ServerPlayerID	int	
+RCONPort	int	27015
+RCONPassword	string	
+DiscordEnable	bool	false
+DiscordToken	string	
+DiscordChatChannel	string	
+DiscordLogChannel	string	
+DiscordCommandChannel	string	
+WebhookAddress	string	
+Password	string	
+MaxAccountsPerUser	int	2
+AllowCoop	bool	true
+SleepAllowed	bool	false
+SleepNeeded	bool	false
+KnockedDownAllowed	bool	false
+SneakModeHideFromOtherPlayers	bool	true
+UltraSpeedDoesnotAffectToAnimals	bool	false
+WorkshopItems	string	2313387159;2544353492;2503622437;2896041179;2710167561;2847184718;2553809727;2286124931;2956146279;2142622992;2734705913;2366717227;2650547917;2769706949;1299328280;2757712197;515555911;2447729538;2335368829;2948824747;3610677934;2920899878;2625625421;3330403100;2714198296;3077900375;3490188370;3042138819;3577903007;2815560151;2951270166;3171167894;3508537032;3682045254;3786993262;2642541073;2566953935;2618213077;2799152995;2409333430;2846036306;2873290424;2478247379;2811383142;2805630347;2897390033;2886832936;2886832257;2870394916;2962175696;2952802178;2942793445;2886833398;3026723485;3110911330;2991201484;3073430075;2932549988;2900580391;2913633066;3005903549;2937786633;3110913021;2772575623;2932547723;2950902979;3722064198;3722134990;2990322197;3309896124;3389448389;3397207461;3394044313;3693258802;3420478458;2788256295;3637364024;3389050623;3610005735;3775549570;2705406713;2423906082;2432621382
+SteamScoreboard	bool	false
+SteamVAC	bool	true
+UPnP	bool	false
+VoiceEnable	bool	true
+VoiceMinDistance	float	10.0
+VoiceMaxDistance	float	100.0
+Voice3D	bool	true
+SpeedLimit	float	70.0
+LoginQueueEnabled	bool	false
+LoginQueueConnectTimeout	int	60
+server_browser_announced_ip	string	
+PlayerRespawnWithSelf	bool	false
+PlayerRespawnWithOther	bool	false
+FastForwardMultiplier	float	40.0
+DisableSafehouseWhenOwnerConnected	bool	false
+Faction	bool	true
+FactionDaySurvivedToCreate	int	0
+FactionPlayersRequiredForTag	int	1
+DisableRadioStaff	bool	false
+DisableRadioAdmin	bool	true
+DisableRadioGM	bool	true
+DisableRadioOverseer	bool	false
+DisableRadioModerator	bool	false
+DisableRadioInvisible	bool	true
+ClientCommandFilter	string	-vehicle.*;+vehicle.damageWindow;+vehicle.fixPart;+vehicle.installPart;+vehicle.uninstallPart
+ClientActionLogs	string	ISEnterVehicle;ISExitVehicle;ISTakeEngineParts;
+PerkLogs	bool	true
+ItemNumbersLimitPerContainer	int	0
+BloodSplatLifespanDays	int	0
+AllowNonAsciiUsername	bool	false
+BanKickGlobalSound	bool	true
+RemovePlayerCorpsesOnCorpseRemoval	bool	false
+TrashDeleteAll	bool	false
+PVPMeleeWhileHitReaction	bool	false
+MouseOverToSeeDisplayName	bool	true
+HidePlayersBehindYou	bool	true
+PVPMeleeDamageModifier	float	30.0
+PVPFirearmDamageModifier	float	50.0
+CarEngineAttractionModifier	float	0.5
+PlayerBumpPlayer	bool	false
+MapRemotePlayerVisibility	int	1
+BackupsCount	int	10
+BackupsOnStart	bool	true
+BackupsOnVersionChange	bool	true
+BackupsPeriod	int	60
+DisableVehicleTowing	bool	false
+DisableTrailerTowing	bool	false
+DisableBurntTowing	bool	false
+BadWordListFile	string	
+GoodWordListFile	string	
+BadWordPolicy	int	3
+BadWordReplacement	string	[HIDDEN]
+AntiCheatSafety	int	4
+AntiCheatSpeed	int	4
+AntiCheatNoClip	int	4
+AntiCheatHit	int	4
+AntiCheatPacketException	int	4
+AntiCheatPermission	int	4
+AntiCheatXP	int	4
+AntiCheatSafeHouse	int	4
+AntiCheatPlayer	int	4
+AntiCheatChecksum	int	4
+MultiplayerStatisticsPeriod	int	1
+DisableScoreboard	bool	false
+HideAdminsInPlayerList	bool	false
+MaxPacketsPerSecond	int	300
+ShowCoordinates	bool	false
+Seed	string	wiAwKKlhVOuZKiuQ
+UsePhysicsHitReaction	bool	false
+ChatMessageCharacterLimit	int	200
+ChatMessageSlowModeTime	int	3

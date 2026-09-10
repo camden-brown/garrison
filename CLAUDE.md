@@ -53,6 +53,23 @@ summary for a scheduled job.
   flood cannot drive the render loop.
 - `internal/games/valheim` — the first plugin. Fixtures in `testdata/` are a
   captured session from a real server, not documentation.
+- `internal/games/zomboid` — the second, and the one M3 was for. 144 ini keys
+  and 269 sandbox variables in `keys_gen.go`, generated from fixtures
+  extracted out of a real install; `Compile` writes both files whole and
+  `Plan`'s env mirrors the thirteen keys the image rewrites on every boot
+  ([ADR 0011](docs/decisions/0011-compile-writes-whole-files.md)). It is the
+  first game to implement any of `caps.go`: `Rostered`, `Commandable`,
+  `Drainable` and `Moddable`.
+
+  Its player events never reach stdout — the server writes joins, leaves and
+  chat to files inside the volume — so its roster comes over RCON. That is the
+  cleanest vindication of the capability split so far: the Players view works
+  the same over a log-derived roster and an asked-for one, and neither it nor
+  the store knows which it has.
+- `internal/services/conn` — the RCON transport, implementing `games.Conn`.
+  Source RCON over TCP, one serialised connection per server, reconnect and
+  retry once because the usual failure is a socket the server closed while
+  nothing was using it.
 - `internal/tasks` — the engine. Lanes are per server and serialised; steps
   declare compensation; the journal is written before every step and an
   interrupted task is failed and named rather than resumed.

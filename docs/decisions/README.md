@@ -24,3 +24,4 @@ colour choices are meant to be argued with and live in
 | [0008](0008-game-vocabularies-come-from-the-game.md) | A plugin's option lists are extracted from the game, not transcribed | Accepted |
 | [0009](0009-secrets-stay-in-the-config-file-for-now.md) | Secrets stay in the config file, and the form will not type one | Accepted |
 | [0010](0010-the-console-ring-shares-its-storage.md) | The console ring shares storage between snapshots | Accepted |
+| [0011](0011-compile-writes-whole-files.md) | `Compile` writes whole files, and `Plan` must agree with it | Accepted |

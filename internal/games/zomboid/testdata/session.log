@@ -1,0 +1,26 @@
+# A captured session from a real Project Zomboid dedicated server, not
+# documentation. Steam ids and player names are replaced with fixtures:
+# the repo is not the place for a real operator's identifiers.
+#
+# Note what is absent. There are no join, leave or chat lines here, and
+# that is not an editing choice — the server writes those to user.txt and
+# chat.txt inside the data volume and they never reach stdout. It is why
+# this game implements games.Rostered.
+
+[26-08-26 11:37:19.572] LOG  : General      f:0 st:519,332,742> SLF4J(W): No SLF4J providers were found..
+[26-08-26 11:37:19.573] LOG  : General      f:0 st:519,332,743> SLF4J(W): Defaulting to no-operation (NOP) logger implementation.
+[26-08-26 11:37:19.574] LOG  : General      f:0 st:519,332,744> SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details..
+[26-08-26 11:37:19.633] LOG  : General      f:0 st:519,332,803> Logs configuration:.
+[26-08-26 11:37:19.635] LOG  : General      f:0 st:519,332,805>      General: General.
+[26-08-26 11:37:19.636] LOG  : General      f:0 st:519,332,806>      Network: General.
+[26-08-26 11:37:19.637] LOG  : General      f:0 st:519,332,807>          Lua: General.
+[26-08-26 11:37:19.638] LOG  : General      f:0 st:519,332,808>          Mod: General.
+[26-08-26 11:37:19.640] LOG  : General      f:0 st:519,332,809>  Multiplayer: General.
+[26-08-26 11:37:19.641] LOG  : General      f:0 st:519,332,810>       Packet: Warning.
+[26-08-26 11:37:19.642] LOG  : General      f:0 st:519,332,811> NetworkFileDebug: Warning.
+[26-08-26 11:37:19.642] LOG  : General      f:0 st:519,332,812>         ZNet: Warning.
+[26-08-26 11:37:19.643] LOG  : General      f:0 st:519,332,813> DetailedInfo: Warning.
+[26-08-26 11:37:19.643] LOG  : General      f:0 st:519,332,813>    LuaObject: Warning.
+[26-08-26 11:37:37.065] ERROR: General      f:0 st:519,350,235 at FluidContainerScript.load           > Sanitizing container name 'Large Bucket', name may not contain whitespaces..
+[26-08-26 11:37:38.371] LOG  : General      f:0 st:519,351,540> ERROR: template "DAMN86fordE150blacksmith" not found B.
+[26-08-26 11:37:38.377] LOG  : General      f:0 st:519,351,547> ERROR: template "DAMN86fordE150zenith" not found B.
