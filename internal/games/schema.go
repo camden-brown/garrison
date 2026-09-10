@@ -42,7 +42,14 @@ const (
 	TypeEnum
 	TypeDuration
 	TypeList
-	TypeSecret // never rendered, never written to the config file
+	// TypeSecret is a password. The form masks it and will not let one be
+	// typed, because the only place it could put one is the server's TOML
+	// file — in plain text, beside everything else. That is where a secret
+	// lives today and the file should be treated accordingly; DESIGN's
+	// Credential Manager store is not built. Marking a field secret buys
+	// masking on screen and nothing more, which is the honest reading of it
+	// until ADR 0009 is revisited.
+	TypeSecret
 )
 
 // Impact is what applying a change costs.

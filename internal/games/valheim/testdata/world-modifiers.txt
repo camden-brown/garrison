@@ -1,0 +1,86 @@
+# World modifier vocabulary, extracted from the game's own metadata.
+#
+# Source: assembly_valheim.dll from valheim_server_Data/Managed/, Valheim
+# l-1.0.7 (network version 39), downloaded by the lloesche/valheim-server
+# image's SteamCMD bootstrap. Enum members read out of the .NET metadata
+# tables, not transcribed from documentation.
+#
+# Why this file exists: the -modifier flag is parsed with
+# Enum.TryParse<WorldModifiers> and Enum.TryParse<WorldModifierOption>, both
+# case-insensitive. A misspelled value does not fail the server — it logs and
+# carries on with the setting unapplied. So the spellings are load-bearing and
+# a Valheim update that renames one has to fail a test here, not surface as a
+# server that quietly ignores its own difficulty settings.
+#
+# Regenerate: docker cp the assembly out of a booted container and read the
+# TypeDef/Field tables (python dnfile). See the commit that added this file.
+
+[WorldModifiers]
+Default
+Combat
+DeathPenalty
+Resources
+Raids
+Portals
+
+[WorldModifierOption]
+Default
+None
+Less
+MuchLess
+More
+MuchMore
+Casual
+VeryEasy
+Easy
+Hard
+VeryHard
+Hardcore
+Most
+
+# -setkey names. GlobalKeys mixes server options with world progress; the
+# NonServerOption member is the sentinel that divides them, so everything
+# below it in declaration order (defeated_eikthyr and friends) is progress
+# state and not a setting. Only the members above it are listed here.
+[GlobalKeys]
+PlayerDamage
+EnemyDamage
+WorldLevel
+EventRate
+ResourceRate
+StaminaRate
+AdrenalineRate
+EitrRate
+DurabilityRate
+FoodRate
+MoveStaminaRate
+StaminaRegenRate
+SkillGainRate
+SkillReductionRate
+EnemySpeedSize
+EnemyLevelUpRate
+CarryWeightRate
+PlayerEvents
+Fire
+DeathKeepEquip
+DeathDeleteItems
+DeathDeleteUnequipped
+DeathSkillsReset
+DeathKeepInventory
+NoBuildCost
+NoCraftCost
+AllPiecesUnlocked
+NoWorkbench
+AllRecipesUnlocked
+WorldLevelLockedTools
+PassiveMobs
+NoMap
+NoPortals
+NoBossPortals
+DungeonBuild
+TeleportAll
+NoPseudoDrops
+NoBuildingFall
+NoHeavySnow
+AllHeavySnow
+Preset

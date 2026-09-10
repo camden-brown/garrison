@@ -151,9 +151,18 @@ func strip(line string) (body string, at time.Time, ok bool) {
 	}
 
 	// "09/09/2026 19:58:17: rest"
+	//
+	// The line carries no offset, so the zone has to come from somewhere
+	// else: Plan pins the container to TZ=UTC, which is what makes reading
+	// it as UTC correct rather than lucky. ParseInLocation says so out loud
+	// — time.Parse would default to UTC too, and silently, which is a poor
+	// place to leave an assumption this load-bearing.
+	//
+	// The instant is what gets stored. Rendering it in the operator's own
+	// timezone is comp.Stamp's job, and no view formats one itself.
 	const stamp = "01/02/2006 15:04:05"
 	if len(body) > len(stamp)+2 && body[len(stamp)] == ':' {
-		if t, err := time.Parse(stamp, body[:len(stamp)]); err == nil {
+		if t, err := time.ParseInLocation(stamp, body[:len(stamp)], time.UTC); err == nil {
 			return strings.TrimSpace(body[len(stamp)+1:]), t, true
 		}
 	}

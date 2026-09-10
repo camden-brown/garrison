@@ -68,13 +68,42 @@ func (Game) Plan(inst model.Instance) (model.Plan, error) {
 		"WORLD_NAME":    stringOr(inst, KeyWorldName, inst.Name),
 		"SERVER_PUBLIC": boolString(inst, KeyPublic, false),
 		"SERVER_PORT":   itoa(ports[0].Host),
-		// Garrison supervises restarts. The image's own updater restarting
-		// the server behind our back would produce a stop we did not ask
-		// for, which the fleet view would have to report as a crash.
-		"UPDATE_CRON": "",
+		"CROSSPLAY":     boolString(inst, KeyCrossplay, false),
+		// The container's clock is pinned to UTC because Parse has to read
+		// the wall-clock time Valheim writes into its log, and that line
+		// carries no offset. Left to the image this is UTC by default —
+		// but a default is not a guarantee, and if it ever changed, every
+		// timestamp in the console and the activity feed would silently
+		// shift by the local offset while still looking plausible. Pinning
+		// it makes the assumption something Garrison controls.
+		"TZ": "UTC",
+		// Garrison supervises this container. The image ships three of its
+		// own schedules, and every one of them acts on the server behind
+		// our back:
+		//
+		//   UPDATE_CRON  */15 * * * *  update, restarting the server
+		//   RESTART_CRON 10 5 * * *    a daily bounce at 05:10
+		//   BACKUPS      true, hourly  a copy into /config/backups
+		//
+		// The first two produce a stop nobody asked for, which the fleet
+		// view can only report as a crash, and which would race whatever
+		// task is holding the server's lane. The third writes into the
+		// directory internal/services/backup archives, so every Garrison
+		// backup would swallow the image's backups too and grow by the
+		// hour. All three are Garrison's jobs; the schedule for them lives
+		// in the server's TOML.
+		"UPDATE_CRON":  "",
+		"RESTART_CRON": "",
+		"BACKUPS":      "false",
 	}
 	if pass := stringOr(inst, KeyPassword, ""); pass != "" {
 		env["SERVER_PASS"] = pass
+	}
+	// World modifiers and -setkey flags are launch arguments, not
+	// environment, so they go through the one variable the image appends to
+	// the command line. Empty means the world keeps whatever it has.
+	if args := serverArgs(inst); args != "" {
+		env["SERVER_ARGS"] = args
 	}
 
 	return model.Plan{
