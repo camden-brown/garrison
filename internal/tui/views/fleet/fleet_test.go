@@ -30,6 +30,9 @@ var update = flag.Bool("update", false, "rewrite the .golden files")
 // disagree for reasons that have nothing to do with the code.
 func TestMain(m *testing.M) {
 	lipgloss.SetColorProfile(termenv.Ascii)
+	// Timestamps render in the operator's zone, so the goldens need one
+	// pinned or they move with whoever runs the suite.
+	time.Local = time.UTC
 	os.Exit(m.Run())
 }
 
@@ -100,6 +103,18 @@ func TestGoldenRenders(t *testing.T) {
 		{name: "wide", width: 92, height: 34, snap: snapshot()},
 		{name: "narrow", width: 80, height: 24, snap: snapshot()},
 		{name: "no-rail-wide", width: 120, height: 34, snap: snapshot()},
+		{
+			// The activity feed across a day boundary. A crash at 21:07 is a
+			// different story depending on which evening it was, so the feed
+			// says — and every time here is stored UTC and rendered local.
+			name: "activity-across-days", width: 120, height: 34,
+			snap: snapshot(core.LogEventsRead{At: now, Server: "zomboid-main", Events: []model.Event{
+				{Kind: model.KindError, At: now.AddDate(0, 0, -2), Text: "mod exploded"},
+				{Kind: model.KindJoin, At: now.AddDate(0, 0, -1), Player: "Huldra", Text: "Huldra joined"},
+				{Kind: model.KindChat, At: now.Add(-3 * time.Hour), Text: "<Huldra> anyone seen the boat"},
+				{Kind: model.KindLeave, At: now.Add(-20 * time.Minute), Text: "Huldra left"},
+			}}),
+		},
 		{
 			name: "engine-unreachable", width: 92, height: 34,
 			snap: snapshot(core.FleetUnobservable{
@@ -321,4 +336,79 @@ func taskDone(server string, kind tasks.Kind) core.TaskProgressed {
 		ID: string(kind) + "-1", Server: server, Kind: kind,
 		State: tasks.StateDone, Steps: []string{"stop"}, Cursor: 1,
 	}}
+}
+
+// "/" narrows the table. It is one of the three things a view owns, and the
+// fleet is where it matters most: the screen you look at when something is
+// wrong is also the one with the most rows.
+func TestFilterNarrowsTheTable(t *testing.T) {
+	snap := snapshot()
+
+	v := pressFleet(t, fleet.New(), snap, "/")
+	v = pressFleet(t, v, snap, "a")
+
+	got := v.Render(fleetFrame(), snap)
+	if !strings.Contains(got, "a") {
+		t.Errorf("the matching server is gone:\n%s", got)
+	}
+}
+
+// While the bar is open every key is text, or typing a server's name presses
+// S on the "s" and stops one.
+func TestFilterSwallowsTheDestructiveKeys(t *testing.T) {
+	snap := snapshot()
+
+	v := pressFleet(t, fleet.New(), snap, "/")
+	v = pressFleet(t, v, snap, "S")
+
+	if got := v.Render(fleetFrame(), snap); strings.Contains(got, "Stop") || strings.Contains(got, "type") {
+		t.Errorf("typing into the filter opened a confirmation:\n%s", got)
+	}
+}
+
+func TestFilterEscapeRestoresTheTable(t *testing.T) {
+	snap := snapshot()
+	before := fleet.New().Render(fleetFrame(), snap)
+
+	v := pressFleet(t, fleet.New(), snap, "/")
+	v = pressFleet(t, v, snap, "z", "z", "z")
+	v = pressFleet(t, v, snap, "esc")
+
+	if got := v.Render(fleetFrame(), snap); got != before {
+		t.Errorf("esc did not restore the unfiltered table:\n%s", got)
+	}
+}
+
+func TestFilterWithNoMatchesExplainsItself(t *testing.T) {
+	snap := snapshot()
+
+	v := pressFleet(t, fleet.New(), snap, "/")
+	v = pressFleet(t, v, snap, "z", "z", "z")
+
+	if got := v.Render(fleetFrame(), snap); !strings.Contains(got, "Nothing matching") {
+		t.Errorf("an empty result does not explain itself:\n%s", got)
+	}
+}
+
+// fleetFrame is the frame the filter tests render into.
+func fleetFrame() tui.Frame {
+	return tui.Frame{Width: 120, Height: 34, Theme: comp.NewTheme(false), Now: now, Focused: true}
+}
+
+// pressFleet drives keys the way the shell does.
+func pressFleet(t *testing.T, v tui.View, snap core.Snapshot, keys ...string) tui.View {
+	t.Helper()
+	for _, k := range keys {
+		var msg tea.KeyMsg
+		switch k {
+		case "esc":
+			msg = tea.KeyMsg{Type: tea.KeyEsc}
+		case "enter":
+			msg = tea.KeyMsg{Type: tea.KeyEnter}
+		default:
+			msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
+		}
+		v, _ = v.Update(msg, fleetFrame(), snap)
+	}
+	return v
 }

@@ -19,6 +19,10 @@ import (
 	"github.com/camden-brown/garrison/internal/model"
 	"github.com/camden-brown/garrison/internal/tui"
 	"github.com/camden-brown/garrison/internal/tui/comp"
+
+	// The wizard offers the registered games, so the shell's tests need
+	// them registered — the same blank import cmd uses.
+	_ "github.com/camden-brown/garrison/internal/games/all"
 )
 
 var update = flag.Bool("update", false, "rewrite the .golden files")
@@ -42,6 +46,9 @@ type stubStore struct {
 	cancelled []string
 	restarted []string
 	backedUp  []string
+	restored  []string
+	notices   []string
+	created   []model.Instance
 	updated   []string
 	applied   []string
 }
@@ -74,6 +81,15 @@ func (s *stubStore) Restart(_ context.Context, instance string) {
 }
 func (s *stubStore) Backup(_ context.Context, instance string) {
 	s.backedUp = append(s.backedUp, instance)
+}
+func (s *stubStore) CreateServer(_ context.Context, inst model.Instance) {
+	s.created = append(s.created, inst)
+}
+func (s *stubStore) Notify(_ context.Context, server, text string) {
+	s.notices = append(s.notices, server+": "+text)
+}
+func (s *stubStore) Restore(_ context.Context, instance, archive string) {
+	s.restored = append(s.restored, instance+" <- "+archive)
 }
 func (s *stubStore) Update(_ context.Context, instance string) {
 	s.updated = append(s.updated, instance)
@@ -456,6 +472,685 @@ func TestShellGeometrySurvivesColour(t *testing.T) {
 					t.Errorf("width %d: line %d has a bare '[' at %d: %q", width, i, j, line)
 					break
 				}
+			}
+		}
+	}
+}
+
+// typeLine drives the command line the way a person does: one key per rune.
+func typeLine(app *tui.App, text string) {
+	for _, r := range text {
+		if r == ' ' {
+			app.Update(tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}})
+			continue
+		}
+		app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+}
+
+func openCommand(app *tui.App) {
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+}
+
+// The command line's reason to exist: naming a server other than the one the
+// rail is pointing at, which no key can express.
+func TestCommandLineActsOnANamedServer(t *testing.T) {
+	store := newStub(snapshot())
+	app := newApp(t, store, &stubView{})
+
+	openCommand(app)
+	typeLine(app, "stop b")
+	if _, cmd := app.Update(tea.KeyMsg{Type: tea.KeyEnter}); cmd != nil {
+		app.Update(cmd())
+	}
+
+	if len(store.stopped) != 1 || store.stopped[0] != "b" {
+		t.Errorf("stopped %v, want [b]", store.stopped)
+	}
+}
+
+// While the line is open every key is text, including q — which otherwise
+// quits, and would do it halfway through typing "backup".
+func TestCommandLineSwallowsTheShellsKeys(t *testing.T) {
+	store := newStub(snapshot())
+	app := newApp(t, store, &stubView{})
+
+	openCommand(app)
+	typeLine(app, "backup a")
+
+	out := app.View()
+	if !strings.Contains(out, "backup a") {
+		t.Errorf("the typed line is not on screen:\n%s", out)
+	}
+	if len(store.started)+len(store.stopped)+len(store.backedUp) != 0 {
+		t.Error("typing the line already did something")
+	}
+}
+
+func TestCommandLineCancels(t *testing.T) {
+	store := newStub(snapshot())
+	app := newApp(t, store, &stubView{})
+
+	openCommand(app)
+	typeLine(app, "stop a")
+	app.Update(tea.KeyMsg{Type: tea.KeyEsc})
+
+	if len(store.stopped) != 0 {
+		t.Errorf("esc stopped %v anyway", store.stopped)
+	}
+	if strings.Contains(app.View(), "stop a") {
+		t.Error("esc left the line on screen")
+	}
+}
+
+// A typo has to say so. A command line that silently ignores what it did not
+// understand is one you cannot trust with a verb that stops things.
+func TestUnknownCommandsAreReported(t *testing.T) {
+	store := newStub(snapshot())
+	app := newApp(t, store, &stubView{})
+
+	openCommand(app)
+	typeLine(app, "detonate a")
+	app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if len(store.notices) == 0 {
+		t.Fatal("an unknown command produced no notice")
+	}
+	if !strings.Contains(store.notices[0], "detonate") {
+		t.Errorf("notice = %q, want it to name the command", store.notices[0])
+	}
+}
+
+func TestUnknownServersAreReported(t *testing.T) {
+	store := newStub(snapshot())
+	app := newApp(t, store, &stubView{})
+
+	openCommand(app)
+	typeLine(app, "stop nowhere")
+	app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if len(store.stopped) != 0 {
+		t.Errorf("stopped %v, want nothing", store.stopped)
+	}
+	if len(store.notices) == 0 || !strings.Contains(store.notices[0], "nowhere") {
+		t.Errorf("notices = %v, want one naming the server", store.notices)
+	}
+}
+
+func TestCommandTabCompletes(t *testing.T) {
+	store := newStub(snapshot())
+	app := newApp(t, store, &stubView{})
+
+	openCommand(app)
+	typeLine(app, "ba")
+	app.Update(tea.KeyMsg{Type: tea.KeyTab})
+
+	if out := app.View(); !strings.Contains(out, "backup") {
+		t.Errorf("tab did not complete the verb:\n%s", out)
+	}
+}
+
+// Completion extends to the longest agreement and no further. "st" is both
+// start and stop, and guessing between them on a command line that stops
+// servers is how the wrong one goes down.
+func TestCommandTabDoesNotGuessBetweenVerbs(t *testing.T) {
+	store := newStub(snapshot())
+	app := newApp(t, store, &stubView{})
+
+	openCommand(app)
+	typeLine(app, "st")
+	app.Update(tea.KeyMsg{Type: tea.KeyTab})
+
+	out := app.View()
+	if strings.Contains(out, "start") || strings.Contains(out, "stop") {
+		t.Errorf("tab picked one of start/stop:\n%s", out)
+	}
+}
+
+// The line takes a row from the stage rather than covering one. Overlaying
+// the row you are acting on is how you act on the wrong one.
+func TestTheCommandLineCostsTheStageARow(t *testing.T) {
+	v := &stubView{}
+	app := newApp(t, newStub(snapshot()), v)
+
+	app.View()
+	before := v.rendered.Height
+
+	openCommand(app)
+	app.View()
+
+	if v.rendered.Height != before-1 {
+		t.Errorf("stage height went %d -> %d, want one row given up", before, v.rendered.Height)
+	}
+}
+
+// Ambient mode drops the chrome. The status bar going is the point rather than
+// an oversight — it is the row that makes this look like a tool you are using
+// rather than a thing you left on a second monitor.
+func TestAmbientDropsTheChrome(t *testing.T) {
+	app := newApp(t, newStub(snapshot()), &stubView{})
+
+	normal := app.View()
+	if !strings.Contains(normal, "STUB") {
+		t.Fatalf("the status bar is missing before ambient mode:\n%s", normal)
+	}
+
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+	got := app.View()
+
+	if strings.Contains(got, "STUB") {
+		t.Errorf("ambient mode kept the status bar:\n%s", got)
+	}
+	for _, want := range []string{"A", "B", "C"} {
+		if !strings.Contains(strings.ToUpper(got), want) {
+			t.Errorf("ambient mode is missing a card for %q:\n%s", want, got)
+		}
+	}
+}
+
+// Any key leaves. A mode you have to remember the exit key for is a mode
+// somebody force-quits the terminal out of.
+func TestAnyKeyLeavesAmbient(t *testing.T) {
+	for _, k := range []tea.KeyMsg{
+		{Type: tea.KeyRunes, Runes: []rune{'j'}},
+		{Type: tea.KeyEsc},
+		{Type: tea.KeyRunes, Runes: []rune{'F'}},
+	} {
+		app := newApp(t, newStub(snapshot()), &stubView{})
+		app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+		app.Update(k)
+
+		if got := app.View(); !strings.Contains(got, "STUB") {
+			t.Errorf("%v did not leave ambient mode:\n%s", k, got)
+		}
+	}
+}
+
+// The one key that always works still always works.
+func TestCtrlCQuitsFromAmbient(t *testing.T) {
+	app := newApp(t, newStub(snapshot()), &stubView{})
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+
+	_, cmd := app.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatal("ctrl+c in ambient mode produced no command")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Error("ctrl+c in ambient mode did not quit")
+	}
+}
+
+func TestAmbientFitsTheTerminal(t *testing.T) {
+	for _, width := range []int{80, 92, 120, 160} {
+		app := tui.NewApp(context.Background(), newStub(snapshot()), comp.NewTheme(false), &stubView{})
+		app.Update(tea.WindowSizeMsg{Width: width, Height: 34})
+		app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+
+		for i, line := range strings.Split(app.View(), "\n") {
+			if w := comp.Width(line); w > width {
+				t.Errorf("width %d: ambient line %d is %d cells", width, i, w)
+			}
+		}
+	}
+}
+
+func openPalette(app *tui.App) {
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+}
+
+func TestPaletteOffersServersViewsAndVerbs(t *testing.T) {
+	app := newApp(t, newStub(snapshot()), &stubView{})
+	openPalette(app)
+
+	got := app.View()
+	for _, want := range []string{"PALETTE", "server", "view", "start"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the palette is missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// Subsequence matching is what makes the palette worth opening: "vh" should
+// reach "valheim-huldra" without typing the whole name.
+func TestPaletteMatchesASubsequence(t *testing.T) {
+	snap := core.Reduce(
+		core.Snapshot{Engine: core.Engine{Transport: "npipe"}},
+		core.FleetObserved{At: now, Containers: []host.Container{
+			{Instance: "valheim-huldra", State: model.StateRunning},
+			{Instance: "zomboid-main", State: model.StateStopped},
+		}},
+	)
+	app := newApp(t, newStub(snap), &stubView{})
+
+	openPalette(app)
+	typeLine(app, "vh")
+
+	// The rail lists every server regardless, so the assertion is about the
+	// palette's own rows rather than the whole screen.
+	got := app.View()
+	panel := got[strings.Index(got, "PALETTE"):]
+
+	if !strings.Contains(panel, "valheim-huldra") {
+		t.Errorf("the subsequence did not reach the server:\n%s", panel)
+	}
+	if strings.Contains(panel, "zomboid-main") {
+		t.Errorf("a non-matching server survived:\n%s", panel)
+	}
+}
+
+// Enter on a server row selects it rather than doing something to it. The
+// palette navigates as well as acts, and the difference matters when the list
+// also contains "stop".
+func TestPaletteSelectsAServer(t *testing.T) {
+	store := newStub(snapshot())
+	app := newApp(t, store, &stubView{})
+
+	openPalette(app)
+	typeLine(app, "b")
+	app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if len(store.stopped)+len(store.started) != 0 {
+		t.Error("selecting a server in the palette ran a verb")
+	}
+	if got := app.View(); strings.Contains(got, "PALETTE") {
+		t.Errorf("the palette stayed open after enter:\n%s", got)
+	}
+}
+
+func TestPaletteRunsAVerb(t *testing.T) {
+	store := newStub(snapshot())
+	app := newApp(t, store, &stubView{})
+
+	// Select a server first so the verb has a target.
+	openPalette(app)
+	typeLine(app, "b")
+	app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	openPalette(app)
+	typeLine(app, "stop")
+	if _, cmd := app.Update(tea.KeyMsg{Type: tea.KeyEnter}); cmd != nil {
+		app.Update(cmd())
+	}
+
+	if len(store.stopped) != 1 || store.stopped[0] != "b" {
+		t.Errorf("stopped %v, want [b]", store.stopped)
+	}
+}
+
+func TestPaletteEscapeCloses(t *testing.T) {
+	app := newApp(t, newStub(snapshot()), &stubView{})
+
+	openPalette(app)
+	app.Update(tea.KeyMsg{Type: tea.KeyEsc})
+
+	if got := app.View(); strings.Contains(got, "PALETTE") {
+		t.Errorf("esc did not close the palette:\n%s", got)
+	}
+}
+
+// While it is open every key is text, or typing "stop" quits on the q that
+// is not there and jumps views on the numbers that are.
+func TestPaletteSwallowsTheShellsKeys(t *testing.T) {
+	app := newApp(t, newStub(snapshot()), &stubView{})
+
+	openPalette(app)
+	typeLine(app, "q1")
+
+	if got := app.View(); !strings.Contains(got, "PALETTE") {
+		t.Errorf("the palette closed while being typed into:\n%s", got)
+	}
+}
+
+func TestPaletteFitsTheTerminal(t *testing.T) {
+	for _, width := range []int{80, 92, 120} {
+		app := tui.NewApp(context.Background(), newStub(snapshot()), comp.NewTheme(false), &stubView{})
+		app.Update(tea.WindowSizeMsg{Width: width, Height: 34})
+		openPalette(app)
+		typeLine(app, "s")
+
+		for i, line := range strings.Split(app.View(), "\n") {
+			if w := comp.Width(line); w > width {
+				t.Errorf("width %d: palette line %d is %d cells", width, i, w)
+			}
+		}
+	}
+}
+
+func openWizard(app *tui.App) {
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+}
+
+func TestWizardCreatesAServer(t *testing.T) {
+	store := newStub(snapshot())
+	app := newApp(t, store, &stubView{})
+
+	openWizard(app)
+	app.Update(tea.KeyMsg{Type: tea.KeyTab}) // game -> name
+	typeLine(app, "valheim-new")
+	app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if len(store.created) != 1 {
+		t.Fatalf("created %d servers, want 1", len(store.created))
+	}
+	got := store.created[0]
+	if got.Name != "valheim-new" {
+		t.Errorf("name = %q, want valheim-new", got.Name)
+	}
+	if got.Game == "" || got.Image == "" {
+		t.Errorf("instance = %+v, want the game's id and default image filled in", got)
+	}
+	if got.Data == "" {
+		t.Error("no data directory was proposed")
+	}
+}
+
+// The wizard's reason to exist: the second Valheim server does not collide
+// with the first. Ports come from the live fleet, not from the game's
+// defaults alone.
+func TestWizardProposesPortsAroundTheFleet(t *testing.T) {
+	snap := core.Reduce(
+		core.Snapshot{Engine: core.Engine{Transport: "npipe"}},
+		core.FleetObserved{At: now, Containers: []host.Container{
+			{Instance: "valheim-one", Game: "valheim", State: model.StateRunning,
+				Ports: []model.PortMap{{Container: "2456/udp", Host: 2456}, {Container: "2457/udp", Host: 2457}}},
+		}},
+	)
+	store := newStub(snap)
+	app := newApp(t, store, &stubView{})
+
+	openWizard(app)
+	app.Update(tea.KeyMsg{Type: tea.KeyTab})
+	typeLine(app, "valheim-two")
+	app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if len(store.created) != 1 {
+		t.Fatalf("created %d servers, want 1", len(store.created))
+	}
+	for _, p := range store.created[0].Ports {
+		if p.Host == 2456 || p.Host == 2457 {
+			t.Errorf("proposed port %d, which the fleet is already using", p.Host)
+		}
+	}
+	if len(store.created[0].Ports) == 0 {
+		t.Error("no ports were proposed")
+	}
+}
+
+// A name that cannot be a file name or a container name is refused here
+// rather than surfacing as a Docker error three steps later.
+func TestWizardRefusesImpossibleNames(t *testing.T) {
+	for _, name := range []string{"", "has space", "slash/es"} {
+		store := newStub(snapshot())
+		app := newApp(t, store, &stubView{})
+
+		openWizard(app)
+		app.Update(tea.KeyMsg{Type: tea.KeyTab})
+		typeLine(app, name)
+		app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+		if len(store.created) != 0 {
+			t.Errorf("%q was accepted as a server name", name)
+		}
+		if len(store.notices) == 0 {
+			t.Errorf("%q was refused without saying why", name)
+		}
+	}
+}
+
+func TestWizardRefusesADuplicateName(t *testing.T) {
+	store := newStub(snapshot())
+	app := newApp(t, store, &stubView{})
+
+	openWizard(app)
+	app.Update(tea.KeyMsg{Type: tea.KeyTab})
+	typeLine(app, "a") // already in the fixture fleet
+	app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if len(store.created) != 0 {
+		t.Error("a duplicate name was accepted")
+	}
+}
+
+func TestWizardEscapeCancels(t *testing.T) {
+	store := newStub(snapshot())
+	app := newApp(t, store, &stubView{})
+
+	openWizard(app)
+	app.Update(tea.KeyMsg{Type: tea.KeyTab})
+	typeLine(app, "valheim-new")
+	app.Update(tea.KeyMsg{Type: tea.KeyEsc})
+
+	if len(store.created) != 0 {
+		t.Error("esc created a server anyway")
+	}
+	if got := app.View(); strings.Contains(got, "NEW SERVER") {
+		t.Errorf("esc left the wizard open:\n%s", got)
+	}
+}
+
+// While the form is open every key is form input, or typing a name presses
+// the shell's own bindings on the way past.
+func TestWizardSwallowsTheShellsKeys(t *testing.T) {
+	store := newStub(snapshot())
+	app := newApp(t, store, &stubView{})
+
+	openWizard(app)
+	app.Update(tea.KeyMsg{Type: tea.KeyTab})
+	typeLine(app, "qf1")
+
+	if got := app.View(); !strings.Contains(got, "NEW SERVER") {
+		t.Errorf("the wizard closed while being typed into:\n%s", got)
+	}
+}
+
+func TestWizardFitsTheTerminal(t *testing.T) {
+	for _, width := range []int{80, 92, 120} {
+		app := tui.NewApp(context.Background(), newStub(snapshot()), comp.NewTheme(false), &stubView{})
+		app.Update(tea.WindowSizeMsg{Width: width, Height: 34})
+		openWizard(app)
+		app.Update(tea.KeyMsg{Type: tea.KeyTab})
+		typeLine(app, "valheim-new")
+
+		for i, line := range strings.Split(app.View(), "\n") {
+			if w := comp.Width(line); w > width {
+				t.Errorf("width %d: wizard line %d is %d cells", width, i, w)
+			}
+		}
+	}
+}
+
+// serverWith builds a fleet of one configured server, which is what the share
+// panel needs — the address and the settings live on the instance.
+func serverWith(inst model.Instance) core.Snapshot {
+	return core.Reduce(
+		core.Snapshot{Engine: core.Engine{Transport: "npipe"}},
+		core.InstancesLoaded{At: now, Instances: []model.Instance{inst}},
+		core.FleetObserved{At: now, Containers: []host.Container{
+			{Instance: inst.Name, Game: inst.Game, State: model.StateRunning,
+				Ports: inst.Ports},
+		}},
+	)
+}
+
+func valheimInstance() model.Instance {
+	return model.Instance{
+		Name: "valheim-main", Game: "valheim", Data: "/data",
+		Address: "shatterplain.duckdns.org",
+		Ports:   []model.PortMap{{Container: "2456/udp", Host: 2456}},
+		Settings: map[string]any{
+			"ServerName": "The Shattered Plains",
+			"ServerPass": "gemliowvp18",
+			"WorldName":  "Midgard",
+		},
+	}
+}
+
+func shareAndRead(t *testing.T, snap core.Snapshot, server string) (*tui.App, string) {
+	t.Helper()
+	app := newApp(t, newStub(snap), &stubView{})
+
+	// The rail starts on the fleet; the palette is the shortest way to pick
+	// a server without depending on arrow-key geometry.
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+	typeLine(app, server)
+	app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	return app, app.View()
+}
+
+// What a player actually needs, in one paste: where to connect, and the
+// password to get in.
+func TestShareCopiesTheJoinDetails(t *testing.T) {
+	_, got := shareAndRead(t, serverWith(valheimInstance()), "valheim-main")
+
+	for _, want := range []string{
+		"SHARE",
+		"The Shattered Plains",
+		"shatterplain.duckdns.org:2456",
+		"gemliowvp18",
+		"Midgard",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the share panel is missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// The panel is the receipt. OSC 52 is advisory — the terminal may drop it —
+// so a feature whose only evidence is somebody else's paste would fail
+// silently.
+func TestSharePanelShowsWhatWasCopied(t *testing.T) {
+	_, got := shareAndRead(t, serverWith(valheimInstance()), "valheim-main")
+
+	if !strings.Contains(got, "OSC 52") {
+		t.Errorf("the panel does not offer a fallback for terminals that ignore it:\n%s", got)
+	}
+}
+
+// Garrison cannot work out a public address, so it says so rather than
+// pasting a LAN address that works for nobody outside the house.
+func TestShareSaysWhenTheAddressIsNotSet(t *testing.T) {
+	inst := valheimInstance()
+	inst.Address = ""
+
+	_, got := shareAndRead(t, serverWith(inst), "valheim-main")
+
+	if !strings.Contains(got, "not set") {
+		t.Errorf("a server with no address should say so:\n%s", got)
+	}
+	if strings.Contains(got, ":2456") {
+		t.Errorf("a port was pasted with no host to go with it:\n%s", got)
+	}
+}
+
+func TestShareSaysWhenThereIsNoPassword(t *testing.T) {
+	inst := valheimInstance()
+	delete(inst.Settings, "ServerPass")
+
+	_, got := shareAndRead(t, serverWith(inst), "valheim-main")
+
+	if !strings.Contains(got, "Password: none") && !strings.Contains(got, "none") {
+		t.Errorf("an open server should say the password is none:\n%s", got)
+	}
+	if strings.Contains(got, "gemliowvp18") {
+		t.Errorf("a password appeared for a server that has none:\n%s", got)
+	}
+}
+
+// The panel is a receipt rather than a mode: the next key clears it and is
+// otherwise handled normally.
+func TestSharePanelClearsOnTheNextKey(t *testing.T) {
+	app, got := shareAndRead(t, serverWith(valheimInstance()), "valheim-main")
+	if !strings.Contains(got, "SHARE") {
+		t.Fatalf("the panel did not open:\n%s", got)
+	}
+
+	app.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if after := app.View(); strings.Contains(after, "SHARE") {
+		t.Errorf("the panel outlived the next key:\n%s", after)
+	}
+}
+
+// Sharing "the fleet" is not a thing, and it should say so rather than
+// copying an empty template.
+func TestShareWithNoServerSelectedExplains(t *testing.T) {
+	store := newStub(serverWith(valheimInstance()))
+	app := newApp(t, store, &stubView{})
+
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}}) // fleet: nothing selected
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+
+	if strings.Contains(app.View(), "SHARE") {
+		t.Error("the share panel opened with no server selected")
+	}
+	if len(store.notices) == 0 {
+		t.Error("sharing with no server selected said nothing")
+	}
+}
+
+func TestSharePanelFitsTheTerminal(t *testing.T) {
+	for _, width := range []int{80, 92, 120} {
+		app := tui.NewApp(context.Background(), newStub(serverWith(valheimInstance())),
+			comp.NewTheme(false), &stubView{})
+		app.Update(tea.WindowSizeMsg{Width: width, Height: 34})
+		app.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+		typeLine(app, "valheim-main")
+		app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+
+		for i, line := range strings.Split(app.View(), "\n") {
+			if w := comp.Width(line); w > width {
+				t.Errorf("width %d: share line %d is %d cells", width, i, w)
+			}
+		}
+	}
+}
+
+// The status bar has advertised "? help" since M0. This is the test that it
+// is not lying.
+func TestHelpOpensAndListsTheKeys(t *testing.T) {
+	app := newApp(t, newStub(snapshot()), &stubView{})
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+
+	got := app.View()
+	for _, want := range []string{"HELP", "EVERYWHERE", "palette", "ambient", "join details"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("help is missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// Generated from the View contract rather than written by hand, which is the
+// reason Keys() exists at all.
+func TestHelpListsTheActiveViewsKeys(t *testing.T) {
+	app := newApp(t, newStub(snapshot()), &stubView{})
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+
+	if got := app.View(); !strings.Contains(got, "STUB") {
+		t.Errorf("help does not name the active screen:\n%s", got)
+	}
+}
+
+func TestAnyKeyClosesHelp(t *testing.T) {
+	app := newApp(t, newStub(snapshot()), &stubView{})
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	app.Update(tea.KeyMsg{Type: tea.KeyEsc})
+
+	if got := app.View(); strings.Contains(got, "EVERYWHERE") {
+		t.Errorf("esc did not close help:\n%s", got)
+	}
+}
+
+func TestHelpFitsTheTerminal(t *testing.T) {
+	for _, width := range []int{80, 92, 120} {
+		app := tui.NewApp(context.Background(), newStub(snapshot()), comp.NewTheme(false), &stubView{})
+		app.Update(tea.WindowSizeMsg{Width: width, Height: 34})
+		app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+
+		for i, line := range strings.Split(app.View(), "\n") {
+			if w := comp.Width(line); w > width {
+				t.Errorf("width %d: help line %d is %d cells", width, i, w)
 			}
 		}
 	}

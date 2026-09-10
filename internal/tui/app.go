@@ -23,11 +23,22 @@ type Store interface {
 	Stop(ctx context.Context, instance string)
 	Restart(ctx context.Context, instance string)
 	Backup(ctx context.Context, instance string)
+	Restore(ctx context.Context, instance, archive string)
 	Update(ctx context.Context, instance string)
 	ApplySettings(ctx context.Context, instance string, recreate bool)
 	EditSetting(ctx context.Context, instance, key string, value any)
 	DiscardDraft(ctx context.Context, instance string)
 	CancelTask(ctx context.Context, id string)
+
+	// CreateServer writes a new server's configuration. The wizard is the
+	// only caller, and it is here rather than behind a message because it
+	// answers immediately — there is no task to watch.
+	CreateServer(ctx context.Context, inst model.Instance)
+
+	// Notify is how the shell reports a command line that made no sense.
+	// It is the store's because a notice outlives the keystroke that
+	// caused it — the fleet's attention pane shows the same list.
+	Notify(ctx context.Context, server, text string)
 }
 
 // railThreshold is the width below which the rail is dropped.
@@ -51,6 +62,44 @@ type App struct {
 	// evening.
 	selected string
 	focus    comp.Focus
+
+	// The command line: ":" opens it, and it takes the verbs that are
+	// otherwise keys. It lives on the shell rather than in a view because
+	// its verbs are fleet-wide — ":stop zomboid-main" should work from the
+	// Backups screen — and because a view that owned it would have to be
+	// asked to give the keyboard back.
+	//
+	// The text is shell state for the same reason the Backups confirmation
+	// is view state: an abandoned half-typed command is not worth
+	// preserving across a resize, and the shell is rebuilt far less often
+	// than a view.
+	commanding bool
+	command    string
+	caret      int
+
+	// The palette: ctrl+P over servers, views and verbs.
+	palette       bool
+	paletteQuery  string
+	paletteCaret  int
+	paletteCursor int
+
+	// wizard is the "n" provisioner form.
+	wizard wizardState
+
+	// helping is the "?" overlay.
+	helping bool
+
+	// sharing holds the text "y" copied, shown until a key dismisses it.
+	// It is not a copy of state: it is a record of what left the process,
+	// which is the only way to check that what was pasted is what was on
+	// screen.
+	sharing string
+
+	// ambient is DESIGN's F: no rail, no status bar, a card per server.
+	// Any key leaves, which is why it is checked before every other
+	// binding — a mode you have to remember the exit key for is a mode
+	// somebody force-quits the terminal out of.
+	ambient bool
 
 	snap   core.Snapshot
 	sub    <-chan core.Snapshot
@@ -163,9 +212,56 @@ func (a *App) pruneSelection() {
 }
 
 func (a *App) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// The command line swallows everything while it is open, including q.
+	if a.commanding {
+		return a.commandKey(msg)
+	}
+
+	// The palette, like the command line, swallows everything while open.
+	if a.palette {
+		return a.paletteKey(msg)
+	}
+	if a.wizard.open {
+		return a.wizardKey(msg)
+	}
+
+	// The share panel is a receipt, not a mode: any key clears it and is
+	// otherwise handled normally, so it never gets in the way.
+	if a.sharing != "" {
+		a.sharing = ""
+	}
+
+	// Help is a mode, and the only way out is any key — which is what the
+	// panel says.
+	if a.helping {
+		a.helping = false
+		if msg.String() == "ctrl+c" {
+			return a, tea.Quit
+		}
+		return a, nil
+	}
+
+	// Any key leaves ambient mode, ctrl+c included — it quits as well, so
+	// the one key that always works still always works.
+	if a.ambient {
+		a.ambient = false
+		if k := msg.String(); k == "ctrl+c" {
+			return a, tea.Quit
+		}
+		return a, nil
+	}
+
 	switch k := msg.String(); k {
 	case "ctrl+c", "q":
 		return a, tea.Quit
+
+	case ":":
+		a.commanding, a.command, a.caret = true, "", 0
+		return a, nil
+
+	case "ctrl+p":
+		a.palette, a.paletteQuery, a.paletteCaret, a.paletteCursor = true, "", 0, 0
+		return a, nil
 
 	case "tab":
 		// Three stops, always in the same order, so the cycle is
@@ -176,6 +272,21 @@ func (a *App) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "f":
 		a.selected = ""
 		a.show(ViewFleet)
+		return a, nil
+
+	case "F":
+		a.ambient = true
+		return a, nil
+
+	case "n":
+		a.openWizard()
+		return a, nil
+
+	case "y":
+		return a, a.share()
+
+	case "?":
+		a.helping = true
 		return a, nil
 
 	case "1", "2", "3", "4", "5", "6", "7":
@@ -318,6 +429,8 @@ func (a *App) dispatch(msg ActionMsg) tea.Cmd {
 		a.store.Restart(a.ctx, msg.Server)
 	case core.OpBackup:
 		a.store.Backup(a.ctx, msg.Server)
+	case core.OpRestore:
+		a.store.Restore(a.ctx, msg.Server, msg.Archive)
 	case core.OpUpdate:
 		a.store.Update(a.ctx, msg.Server)
 	case core.OpApply:
@@ -331,8 +444,50 @@ func (a *App) View() string {
 		return "no views registered\n"
 	}
 
-	// One status bar, and one blank line above it.
+	// Ambient mode is the whole terminal: no rail, no status bar, nothing
+	// but the cards. Dropping the bar is the point rather than an oversight
+	// — it is the row that makes a dashboard look like a tool rather than
+	// something you leave on a second monitor.
+	if a.ambient {
+		return a.ambientView()
+	}
+
+	// One status bar, and one blank line above it. The command line, when
+	// it is open, takes a row from the stage rather than overlaying it:
+	// covering the row you are acting on is how you act on the wrong one.
 	body := a.height - 2
+	if a.commanding {
+		body--
+	}
+	// The palette is an overlay in spirit and a panel in fact: it takes the
+	// rows it needs from the stage rather than drawing over them, for the
+	// same reason the command line does.
+	paletteHeight := 0
+	if a.palette {
+		paletteHeight = paletteRows + 4
+		body -= paletteHeight
+		if body < 3 {
+			body = 3
+		}
+	}
+	if a.wizard.open {
+		body -= wizardRows
+		if body < 3 {
+			body = 3
+		}
+	}
+	if a.sharing != "" {
+		body -= shareRows
+		if body < 3 {
+			body = 3
+		}
+	}
+	if a.helping {
+		body -= helpRows
+		if body < 3 {
+			body = 3
+		}
+	}
 
 	// Under 100 columns the rail collapses and navigation moves entirely to
 	// the keys, per DESIGN §3. A 26-column rail beside a 70-column terminal
@@ -355,7 +510,23 @@ func (a *App) View() string {
 	// Joining pads the shorter column to match the taller one, which leaves
 	// trailing spaces on most rows. They are invisible until somebody drags
 	// a selection across the terminal and copies a block of whitespace.
-	return trimRight(view) + "\n" + a.statusBar()
+	out := trimRight(view)
+	if a.palette {
+		out += "\n" + a.paletteView(a.width)
+	}
+	if a.wizard.open {
+		out += "\n" + a.wizardView(a.width)
+	}
+	if a.sharing != "" {
+		out += "\n" + a.shareView(a.width)
+	}
+	if a.helping {
+		out += "\n" + a.helpView(a.width)
+	}
+	if line := a.commandLine(a.width); line != "" {
+		out += "\n" + line
+	}
+	return out + "\n" + a.statusBar()
 }
 
 func (a *App) rail(height int) string {

@@ -213,11 +213,17 @@ func gameTile(srv core.Server) comp.Tile {
 // show nothing but the same line, and the thing that caused it would be gone.
 func logTail(f tui.Frame, srv core.Server) string {
 	rows := f.Height - 10
-	if rows < 3 || len(srv.Console) == 0 {
+	if rows < 3 || srv.Console.Len() == 0 {
 		return ""
 	}
 
-	collapsed := collapse(srv.Console)
+	// Collapse a window several times the visible height rather than just
+	// the rows about to be shown: a flood collapses to one counter, so a
+	// window of exactly `rows` would show that counter and nothing of what
+	// came before it. The bound is what keeps a sixteen-thousand-line ring
+	// from being walked on every frame.
+	const window = 40
+	collapsed := comp.CollapseRepeats(srv.Console.Tail(rows * window))
 	if len(collapsed) > rows {
 		collapsed = collapsed[len(collapsed)-rows:]
 	}
@@ -225,9 +231,9 @@ func logTail(f tui.Frame, srv core.Server) string {
 	t := f.Theme
 	var b strings.Builder
 	for _, line := range collapsed {
-		text := line.text
-		if line.count > 1 {
-			text += fmt.Sprintf("  %d×", line.count)
+		text := line.Text()
+		if line.Count > 1 {
+			text += fmt.Sprintf("  %d×", line.Count)
 		}
 		b.WriteString(t.Dim.Render(comp.Truncate(text, comp.Inner(f.Width))))
 		b.WriteString("\n")
@@ -240,30 +246,4 @@ func logTail(f tui.Frame, srv core.Server) string {
 		Width:   f.Width,
 		Focused: f.Focused,
 	}.Render(strings.TrimRight(b.String(), "\n"))
-}
-
-type collapsedLine struct {
-	text  string
-	count int
-}
-
-func collapse(events []model.Event) []collapsedLine {
-	out := make([]collapsedLine, 0, len(events))
-	for _, ev := range events {
-		text := ev.Text
-		if text == "" {
-			text = ev.Raw
-		}
-		if strings.TrimSpace(text) == "" {
-			// An event with nothing to say — a bare connection, say — is
-			// still a fact for the roster but not a console line.
-			continue
-		}
-		if n := len(out); n > 0 && out[n-1].text == text {
-			out[n-1].count++
-			continue
-		}
-		out = append(out, collapsedLine{text: text, count: 1})
-	}
-	return out
 }

@@ -1,0 +1,5 @@
+╭──────────────────────────────────────────────────────────────────────────────────────────╮
+│ MODS                                                                          server-one │
+│ No mods configured. They are the [[mods]] entries in the server's TOML.                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────╯
+Edit [[mods]] in the server's TOML. Reordering and update checks arrive with a mod resolver.

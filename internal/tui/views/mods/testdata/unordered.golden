@@ -1,0 +1,6 @@
+╭──────────────────────────────────────────────────────────────────────────────────────────╮
+│ MODS                                                                 server-one · 2 mods │
+│ ▌      ValheimModding-Jotunn         2.19.0          Thunderstore                        │
+│        denikson-BepInExPack_Valheim  latest          Thunderstore                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────╯
+Edit [[mods]] in the server's TOML. Update checks arrive with a mod resolver.

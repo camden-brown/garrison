@@ -15,7 +15,6 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/camden-brown/garrison/internal/core"
 	"github.com/camden-brown/garrison/internal/model"
@@ -33,6 +32,11 @@ import (
 type View struct {
 	confirm   string // instance awaiting confirmation, empty when none
 	confirmOp core.Op
+
+	// filter narrows the table. It is one of the three things a view owns,
+	// and it stays in force after the bar is closed — the bar reports that
+	// so missing rows never look like missing servers.
+	filter comp.Filter
 
 	// snap is the snapshot being drawn, held only for the length of a
 	// render so row helpers can reach the task list without every one of
@@ -73,6 +77,17 @@ func (v *View) Update(msg tea.Msg, f tui.Frame, snap core.Snapshot) (tui.View, t
 	}
 	next := *v
 	target := selectedOr(f.Server, snap)
+
+	// The filter bar swallows every key while it is open, or typing a
+	// server's name presses S on the "s" and stops one.
+	if filter, handled := next.filter.Key(msgKey); handled {
+		next.filter = filter
+		return &next, nil
+	}
+	if msgKey.String() == "/" && next.confirm == "" {
+		next.filter = next.filter.Open()
+		return &next, nil
+	}
 
 	// A pending confirmation swallows every other key. Answering it is the
 	// only thing the view will do until it is answered.
@@ -432,9 +447,15 @@ func activity(f tui.Frame, snap core.Snapshot, height int) string {
 		text   string
 	}
 
+	// The feed shows the newest few events across the whole fleet, so it
+	// needs a window from each server rather than the whole ring. Sized
+	// well above the visible height because the Info lines filtered out
+	// below can fill a window on a server that is starting up.
+	const window = 512
+
 	var all []line
 	for _, srv := range snap.Servers {
-		for _, ev := range srv.Console {
+		for _, ev := range srv.Console.Tail(window) {
 			text := ev.Text
 			if text == "" {
 				text = ev.Raw
@@ -458,63 +479,22 @@ func activity(f tui.Frame, snap core.Snapshot, height int) string {
 
 	var b strings.Builder
 	for _, l := range all {
-		stamp := l.at.Format("15:04")
+		// Local time, and the day when it is not today. The instant is
+		// stored in UTC because that is what the container's clock writes;
+		// converting is comp.Stamp's job and no view does it itself.
+		stamp := comp.Stamp(l.at, f.Now)
 		server := l.server
-		body := comp.Pad(comp.Truncate(l.text, width-len(stamp)-len(server)-4), width-len(stamp)-len(server)-4)
+		bodyWidth := width - comp.StampWidth - comp.Width(server) - 4
+		body := comp.Pad(comp.Truncate(l.text, bodyWidth), bodyWidth)
 
 		b.WriteString(t.Dim.Render(stamp) + " ")
-		b.WriteString(kindStyle(t, l.kind).Render(kindGlyph(t, l.kind)) + " ")
+		b.WriteString(comp.KindStyle(t, l.kind).Render(comp.KindGlyph(t, l.kind)) + " ")
 		b.WriteString(body + " ")
 		b.WriteString(t.Dim.Render(server))
 		b.WriteString("\n")
 	}
 	return b.String()
 }
-
-func kindGlyph(t *comp.Theme, k model.Kind) string {
-	if t.ASCII {
-		switch k {
-		case model.KindJoin:
-			return ">"
-		case model.KindLeave:
-			return "<"
-		case model.KindDeath, model.KindError:
-			return "x"
-		case model.KindWarn:
-			return "!"
-		}
-		return "."
-	}
-	switch k {
-	case model.KindJoin:
-		return "→"
-	case model.KindLeave:
-		return "←"
-	case model.KindDeath, model.KindError:
-		return "✕"
-	case model.KindWarn:
-		return "!"
-	case model.KindChat:
-		return "\""
-	}
-	return "·"
-}
-
-func kindStyle(t *comp.Theme, k model.Kind) lipglossStyle {
-	switch k {
-	case model.KindDeath, model.KindError:
-		return t.Err
-	case model.KindWarn:
-		return t.Accent
-	case model.KindChat:
-		return t.Chat
-	}
-	return t.Dim
-}
-
-// lipglossStyle is a local alias so the helpers above read without importing
-// lipgloss for one type name.
-type lipglossStyle = lipgloss.Style
 
 func hints(confirming bool) string {
 	if confirming {
@@ -580,12 +560,21 @@ func (v *View) table(f tui.Frame, snap core.Snapshot, target string) string {
 		return emptyExplanation(t, snap)
 	}
 
+	shown := v.matching(snap)
+	if len(shown) == 0 {
+		return t.Dim.Render("Nothing matching \"" + v.filter.Query + "\". esc clears the filter.")
+	}
+
 	var b strings.Builder
 	b.WriteString(t.Header.Render(header(c)))
 	b.WriteString("\n")
-	for _, srv := range snap.Servers {
+	for _, srv := range shown {
 		b.WriteString(v.row(f, c, srv, srv.Name == target))
 		b.WriteString("\n")
+	}
+
+	if bar := v.filter.Render(t, comp.Inner(f.Width)); bar != "" {
+		b.WriteString("\n" + bar)
 	}
 
 	if v.confirm != "" {
@@ -593,6 +582,23 @@ func (v *View) table(f tui.Frame, snap core.Snapshot, target string) string {
 		b.WriteString(t.Accent.Render(confirmPrompt(v.confirmOp, v.confirm)))
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// matching is the servers the filter lets through, in fleet order.
+//
+// Name, game and state, because those are what a person squints at the table
+// for: "the zomboid one", "the crashed one".
+func (v *View) matching(snap core.Snapshot) []core.Server {
+	if !v.filter.On() {
+		return snap.Servers
+	}
+	out := make([]core.Server, 0, len(snap.Servers))
+	for _, srv := range snap.Servers {
+		if v.filter.Matches(srv.Name, srv.Game, srv.State.String()) {
+			out = append(out, srv)
+		}
+	}
+	return out
 }
 
 func header(c columns) string {

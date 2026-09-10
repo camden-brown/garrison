@@ -43,6 +43,16 @@ type View struct {
 	// confirming is set while an apply is waiting for a yes.
 	confirming bool
 
+	// editing is set while a text field has the keyboard, with cursor the
+	// caret position within it.
+	//
+	// Both are cursor-shaped state, which is the only kind a view is allowed
+	// to hold. The text itself goes straight into the store's draft on every
+	// keystroke, so rebuilding this view on a resize costs a caret position
+	// nobody will notice and never a half-typed value.
+	editing bool
+	cursor  int
+
 	// advanced reveals the fields a plugin marked as such, which are hidden
 	// by default to keep the common form short.
 	advanced bool
@@ -77,6 +87,8 @@ var (
 	keyDec      = key.NewBinding(key.WithKeys("-", "_"), key.WithHelp("-", "lower"))
 	keyInc      = key.NewBinding(key.WithKeys("+", "="), key.WithHelp("+", "raise"))
 	keyToggle   = key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "toggle"))
+	keyEdit     = key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "edit text"))
+	keyStopEdit = key.NewBinding(key.WithKeys("enter", "esc"), key.WithHelp("enter/esc", "done"))
 	keyAdvanced = key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "advanced"))
 	keyReset    = key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "reset field"))
 	keyDiscard  = key.NewBinding(key.WithKeys("D"), key.WithHelp("D", "discard all"))
@@ -86,7 +98,7 @@ var (
 )
 
 func (v *View) Keys() []key.Binding {
-	return []key.Binding{keyUp, keyDown, keyLeft, keyRight, keyToggle, keyInc, keyDec, keyAdvanced, keyReset, keyApply}
+	return []key.Binding{keyUp, keyDown, keyLeft, keyRight, keyEdit, keyToggle, keyInc, keyDec, keyAdvanced, keyReset, keyApply}
 }
 
 func (v *View) Update(msg tea.Msg, f tui.Frame, snap core.Snapshot) (tui.View, tea.Cmd) {
@@ -111,6 +123,46 @@ func (v *View) Update(msg tea.Msg, f tui.Frame, snap core.Snapshot) (tui.View, t
 		case key.Matches(msgKey, keyNo):
 			next.confirming = false
 		}
+		return &next, nil
+	}
+
+	// Text editing swallows every other key while it is on, the same way the
+	// confirmation above does — otherwise typing "a" into a server name
+	// would toggle the advanced fields and "D" would discard the form.
+	if next.editing {
+		field, ok := next.focused(form)
+		if !ok || !editable(field) {
+			next.editing = false
+			return &next, nil
+		}
+		if key.Matches(msgKey, keyStopEdit) {
+			next.editing = false
+			return &next, nil
+		}
+
+		// Every keystroke goes to the store. There is no local buffer to
+		// lose and no separate commit: the draft is the buffer, which is
+		// why esc leaves what was typed rather than reverting it. Backing
+		// out of a change is r for this field or D for the form, the same
+		// two keys that back out of a toggle.
+		value := stringValue(srv, field)
+		out, cursor, handled := comp.EditKey(value, next.cursor, msgKey)
+		if !handled {
+			return &next, nil
+		}
+		next.cursor = cursor
+		if out != value {
+			return &next, tui.Edit(srv.Name, field.Key, out)
+		}
+		return &next, nil
+	}
+
+	// Enter on a focused text field starts editing it, checked ahead of the
+	// pane keys below because enter also means "move into the fields pane"
+	// and by this point we are already in it.
+	if field, ok := next.focused(form); ok && editable(field) && key.Matches(msgKey, keyEdit) {
+		next.editing = true
+		next.cursor = len([]rune(stringValue(srv, field)))
 		return &next, nil
 	}
 
@@ -207,6 +259,38 @@ func (v *View) clamp(form form) {
 	if v.field < 0 {
 		v.field = 0
 	}
+}
+
+// focused is the field the keys act on, when the fields pane has them.
+func (v *View) focused(form form) (games.Field, bool) {
+	if v.pane != paneFields {
+		return games.Field{}, false
+	}
+	fields := form.fields(v.group, v.advanced)
+	if len(fields) == 0 {
+		return games.Field{}, false
+	}
+	return fields[min(v.field, len(fields)-1)], true
+}
+
+// editable reports whether a field takes typed text.
+//
+// TypeSecret is deliberately not editable. The form has nowhere to put a
+// password except the server's TOML file, which is the thing games.TypeSecret
+// says it will not do — so until there is somewhere better, a password is
+// changed in the file by someone who knows they are writing it there. See
+// ADR 0009.
+func editable(field games.Field) bool { return field.Type == games.TypeString }
+
+// stringValue is a field's current value as text: the draft if it has been
+// edited, the saved setting otherwise, and the default when it has neither.
+func stringValue(srv core.Server, field games.Field) string {
+	v, ok := srv.Setting(field.Key)
+	if !ok || v == nil {
+		v = field.Default
+	}
+	s, _ := v.(string)
+	return s
 }
 
 // worstImpact is the most expensive thing among the pending changes, which is
@@ -545,7 +629,19 @@ func (v *View) fieldList(t *comp.Theme, srv core.Server, form form, width int) s
 
 		b.WriteString(t.On(t.Accent, selected).Render(marker))
 		b.WriteString(t.On(t.Dim, selected).Render(label))
-		b.WriteString(t.On(valueStyle, selected).Render(value))
+		if selected && v.editing {
+			// The input paints its own caret, so it goes down unwrapped:
+			// a style around it would reset the caret's colours mid-string
+			// and leave the escape codes on screen.
+			b.WriteString(comp.Input{
+				Value:  stringValue(srv, field),
+				Cursor: v.cursor,
+				Width:  valueWidth,
+				Theme:  t,
+			}.Render())
+		} else {
+			b.WriteString(t.On(valueStyle, selected).Render(value))
+		}
 		b.WriteString(t.On(t.Dim, selected).Render(comp.Pad("  "+badgeText(field.Impact), width-2-labelWidth-valueWidth)))
 		b.WriteString("\n")
 
@@ -574,6 +670,12 @@ func badgeText(impact games.Impact) string {
 }
 
 func (v *View) hint(srv core.Server, form form) string {
+	if v.editing {
+		return "typing · enter/esc done"
+	}
+	if field, ok := v.focused(form); ok && editable(field) {
+		return "enter edit · r reset"
+	}
 	if form.hasAdvanced() {
 		if v.advanced {
 			return "a hide advanced"

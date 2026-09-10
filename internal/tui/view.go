@@ -99,11 +99,26 @@ type ActionMsg struct {
 	// view works it out from the game's Schema, because it is the only
 	// thing that knows what a setting costs.
 	Recreate bool
+
+	// Archive is the backup a restore reads from, empty for every other op.
+	Archive string
 }
 
 // Action returns a tea.Cmd that emits an ActionMsg.
 func Action(op core.Op, server string) tea.Cmd {
 	return func() tea.Msg { return ActionMsg{Op: op, Server: server} }
+}
+
+// Restore returns a tea.Cmd that replaces a server's world with an archive.
+//
+// The archive travels with the message because the store has no notion of a
+// selected row: the view knows which backup the cursor was on, and naming it
+// here is what keeps the store from having to hold a cursor on the view's
+// behalf.
+func Restore(server, archive string) tea.Cmd {
+	return func() tea.Msg {
+		return ActionMsg{Op: core.OpRestore, Server: server, Archive: archive}
+	}
 }
 
 // Apply returns a tea.Cmd that applies a server's pending settings.

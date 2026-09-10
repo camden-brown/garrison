@@ -1,8 +1,8 @@
 ╭────────────────╮ ╭───────────────────────────────────────────────────────────────────────╮
-│ GROUPS         │ │ IDENTITY                                         enter edit · r reset │
-│ ▌ Identity     │ │   Server name             Huldra              recreate                │
-│   Access       │ │ ▌ World name              —                   WIPE RISK               │
-│   World        │ │     Names the save files on disk. Changing it starts a new world rat… │
+│ GROUPS         │ │ IDENTITY                                      typing · enter/esc done │
+│ ▌ Identity     │ │ ▌ Server name             Huldra              recreate                │
+│   Access       │ │     Shown in the server browser. Defaults to the instance name.       │
+│   World        │ │   World name              —                   WIPE RISK               │
 │   Rules        │ ╰───────────────────────────────────────────────────────────────────────╯
 ╰────────────────╯                                                                          
 No unapplied changes.

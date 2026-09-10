@@ -5,17 +5,25 @@
 // derive from this slice, so nothing else changes — which is the point of the
 // View interface existing at all.
 //
-// The unbuilt screens are stubs rather than absences. A navigation model you
-// can only half use is hard to judge, and an entry that leads nowhere is
-// indistinguishable from one that is broken.
+// Every screen in the rail is now built. internal/tui/views/stub is kept, and
+// not because it is unused: the next screen starts as one, and a navigation
+// model you can only half use is hard to judge — an entry that leads nowhere
+// is indistinguishable from one that is broken.
+//
+// What replaced the last stubs is not "the screens exist" but that each one
+// can say why it is empty. Mods has no table for Valheim because Valheim
+// implements no games.Moddable, and it says so in Valheim's own terms.
 package all
 
 import (
 	"github.com/camden-brown/garrison/internal/tui"
+	"github.com/camden-brown/garrison/internal/tui/views/backups"
+	"github.com/camden-brown/garrison/internal/tui/views/console"
 	"github.com/camden-brown/garrison/internal/tui/views/dashboard"
 	"github.com/camden-brown/garrison/internal/tui/views/fleet"
+	"github.com/camden-brown/garrison/internal/tui/views/mods"
+	"github.com/camden-brown/garrison/internal/tui/views/players"
 	"github.com/camden-brown/garrison/internal/tui/views/settings"
-	"github.com/camden-brown/garrison/internal/tui/views/stub"
 	"github.com/camden-brown/garrison/internal/tui/views/tasks"
 )
 
@@ -25,21 +33,11 @@ func Views() []tui.View {
 	return []tui.View{
 		fleet.New(),
 		dashboard.New(),
-		stub.New(tui.ViewConsole, "Console", "M2",
-			"Classified log lines with a command input that routes to RCON, to container stdin, "+
-				"or explains why neither is available. The log pipeline behind it already runs — "+
-				"the dashboard's console tail is the same events."),
-		stub.New(tui.ViewPlayers, "Players", "M4",
-			"Who is on now, seven days of sessions, and occupancy by hour so a restart window "+
-				"can be picked that bothers nobody. The live roster already exists on the dashboard; "+
-				"the history needs somewhere durable to live, which is M2's SQLite."),
-		stub.New(tui.ViewMods, "Mods", "M4",
-			"Load order you can reorder, version and update checks, and conflict detection. "+
-				"A game with no mod system gets an explanation here rather than an empty table."),
+		console.New(),
+		players.New(),
+		mods.New(),
 		settings.New(),
 		tasks.New(),
-		stub.New(tui.ViewBackups, "Backups", "M2",
-			"Snapshots, sizes and restore. Restoring over a live save is one of the three actions "+
-				"that asks you to type the server's name."),
+		backups.New(),
 	}
 }

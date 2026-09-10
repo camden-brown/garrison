@@ -1,0 +1,5 @@
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ MODS                                server-one · 1 mods · load order matters │
+│ ▌  1.  2822286426                    2.11.0          Steam Workshop          │
+╰──────────────────────────────────────────────────────────────────────────────╯
+Edit [[mods]] in the server's TOML. Reordering and update checks arrive with a …
