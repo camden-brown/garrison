@@ -443,7 +443,7 @@ func populated() core.Snapshot {
 		core.FleetObserved{At: now, Containers: []host.Container{
 			{Instance: "valheim-huldra", Game: "valheim", State: model.StateRunning, Started: now.Add(-59 * time.Hour)},
 			{Instance: "zomboid-main", Game: "zomboid", State: model.StateRunning, Started: now.Add(-3 * time.Hour)},
-			{Instance: "palworld-sat", Game: "palworld", State: model.StateCrashed, Detail: "OOM killed"},
+			{Instance: "factorio-main", Game: "factorio", State: model.StateCrashed, Detail: "OOM killed"},
 		}},
 	)
 	return core.Reduce(s, core.LogEventsRead{At: now, Server: "valheim-huldra", Events: []model.Event{

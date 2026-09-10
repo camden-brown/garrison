@@ -22,8 +22,11 @@ Valheim first, at M1. Zomboid second, at M3.
 - Zomboid at M3 is the real test — two config files in two syntaxes, RCON,
   Workshop mods with load order that must be reorderable. Expect `Schema` and
   `Compile` to change then. That is the point of it being M3 and not M6.
-- Palworld at M4 confirms a game with **no** mod system degrades to an
-  explanation rather than an empty view.
+- ~~Palworld at M4 confirms a game with **no** mod system degrades to an
+  explanation rather than an empty view.~~ **Superseded 2026-09-10:** Palworld
+  was dropped. Valheim turned out to be the game with no mod system Garrison
+  can manage, so it is what confirms that degradation — the consequence held,
+  the third game was not needed to demonstrate it.
 
 ## Rejected
 

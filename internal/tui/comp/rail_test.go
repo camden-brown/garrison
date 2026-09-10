@@ -21,7 +21,7 @@ var now = time.Date(2026, 9, 9, 21, 7, 0, 0, time.UTC)
 
 func servers() []core.Server {
 	return []core.Server{
-		{Name: "palworld-sat", State: model.StateCrashed},
+		{Name: "factorio-main", State: model.StateCrashed},
 		{Name: "valheim-huldra", State: model.StateRunning, Players: []model.Player{{Name: "Dalinar"}}},
 		{Name: "zomboid-main", State: model.StateRunning},
 	}
@@ -36,7 +36,7 @@ func rail() Rail {
 		Entries: []RailEntry{
 			{Title: "Dashboard", Key: "1"},
 			{Title: "Console", Key: "2"},
-			{Title: "Mods", Key: "3", Reason: "Palworld has no mod system"},
+			{Title: "Mods", Key: "3", Reason: "Valheim has no mod system Garrison can manage"},
 		},
 		Active: 0,
 		Focus:  FocusServers,
@@ -84,7 +84,7 @@ func TestRenderIsExactlyHeightLines(t *testing.T) {
 func TestServersAndViewsBothAppear(t *testing.T) {
 	out := rail().Render()
 
-	for _, want := range []string{"FLEET", "All servers", "palworld-sat", "valheim-huldra", "VIEW", "Dashboard", "SCHEDULE"} {
+	for _, want := range []string{"FLEET", "All servers", "factorio-main", "valheim-huldra", "VIEW", "Dashboard", "SCHEDULE"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rail is missing %q:\n%s", want, out)
 		}
@@ -124,7 +124,7 @@ func TestPlayerCountOnlyForRunningServers(t *testing.T) {
 
 	for _, line := range rows {
 		switch {
-		case strings.Contains(line, "palworld-sat"), strings.Contains(line, "zomboid-main"):
+		case strings.Contains(line, "factorio-main"), strings.Contains(line, "zomboid-main"):
 			if !strings.Contains(line, "—") {
 				t.Errorf("a server with no players should show a dash: %q", line)
 			}

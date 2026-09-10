@@ -2,8 +2,8 @@
 
 <p align="center">
   <strong>A terminal dashboard for running game servers in Docker.</strong><br>
-  One window for every server you own — Project Zomboid, Valheim, Palworld,<br>
-  and whatever you install next month.
+  One window for every server you own — Project Zomboid, Valheim,<br>
+  and whatever you write a package for next month.
 </p>
 
 <p align="center">
@@ -94,6 +94,9 @@ are written once and work the same for every game.
   by listing containers — delete the config directory and it finds your servers
   again.
 - **Not multi-user.** One operator, one machine.
+- **Not a games catalogue.** Two games are supported and a third is not
+  planned. A new one is a Go package and a line in a registry, so the way to
+  get another is to write it rather than to wait for it.
 
 ## Getting started
 
@@ -247,20 +250,18 @@ rather than typed here — it cannot drift.
 
 ## Supported games
 
-**Valheim and Project Zomboid are built.** The point of the table is the
-ragged right-hand side: these games agree on almost nothing, and the UI does
-not care.
+**Two games, and the point of the table is how little they agree on.** The UI
+does not care, which is the whole claim being made.
 
-| | Valheim | Zomboid | Palworld |
-| --- | :-: | :-: | :-: |
-| | **built** | **built** | *planned* |
-| Steam app id | `896660` | `380870` | `2394010` |
-| Player list | log-derived | RCON | REST API |
-| Console | — | RCON | RCON |
-| Graceful drain | — | ✅ | ✅ |
-| Mods | — | Workshop | — |
-| Config files written | 0 (env) | 2 | 1 |
-| Settings in the form | 4 | 413 | — |
+| | Valheim | Project Zomboid |
+| --- | :-: | :-: |
+| Steam app id | `896660` | `380870` |
+| Player list | log-derived | RCON |
+| Console | — | RCON |
+| Graceful drain | — | ✅ |
+| Mods | — | Workshop, order matters |
+| Config files written | 0 (env) | 2, in 2 syntaxes |
+| Settings in the form | 4 | 413 |
 
 Valheim was deliberately first because of that first column of dashes. It has
 no RCON, so player state had to be reconstructed from log lines rather than
@@ -366,10 +367,15 @@ fake encodes match the thing it stands in for.
 | **M1** ✅ | Live truth | Stats and log streaming, the dashboard with sparklines, Valheim behind the `Game` interface. |
 | **M2** ✅ | Task engine | Lanes, steps, compensation, SQLite persistence, the Tasks view. Restart, backup, update, restore and the scheduler, plus the Console and Backups screens over them. |
 | **M3** ✅ | Second game | The settings form and apply, with Valheim's world modifiers read out of the game's own assembly. Project Zomboid: 413 settings across two config syntaxes, RCON, and Workshop mods with load order — plus the transport and the four capabilities it needed. |
-| **M4** ◐ | Players and mods | Built: the Players view — live roster, seven days of sessions, occupancy by hour — over a roster that is asked for where a game can answer and inferred where it cannot. Mods lists and writes the configured load order. Palworld not started. |
+| **M4** ◐ | Players and mods | Built: the Players view — live roster, seven days of sessions, occupancy by hour — over a roster that is asked for where a game can answer and inferred where it cannot. Mods lists and writes the configured load order. Outstanding: reordering it from the screen, and Workshop update checks. |
 | **M5** ✅ | Provisioning and polish | The wizard with port scanning, restore, delete, ambient mode, the palette, the `/` filter, the `:` command line, CLI subcommands, the `?` help overlay, the apply diff and 80-column layouts. |
 
-**M4 is the only milestone still open, and Palworld is what is left in it.**
+**M4 is the only milestone still open**, and what is left in it is mod
+management: reordering the load order from the Mods screen, and checking the
+Workshop for updates. A third game was planned and has been dropped —
+Garrison supports two, and adding another is a package and a registry line
+rather than a milestone.
+
 Everything the second game unblocked has landed: the console sends commands,
 scheduled restarts drain, and a roster is asked for rather than guessed at
 where the game can answer.

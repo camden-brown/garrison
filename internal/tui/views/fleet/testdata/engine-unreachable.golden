@@ -7,7 +7,7 @@
 ╭──────────────────────────────────────────────────────────────────────────────────────────╮
 │ SERVERS                               u start · S stop · r restart · b backup · U update │
 │   NAME             GAME      STATE       PLYR    CPU       MEM  UPTIME PORTS / TASK      │
-│ ▌ palworld-sat     palworld  ? unknown      —      —         —       — engine unreachab… │
+│ ▌ factorio-main    factorio  ? unknown      —      —         —       — engine unreachab… │
 │   valheim-huldra   valheim   ? unknown      —      —         —       — engine unreachab… │
 │   zomboid-main     zomboid   ? unknown      —      —         —       — engine unreachab… │
 │   zomboid-testing  zomboid   ? unknown      —      —         —       — engine unreachab… │

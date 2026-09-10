@@ -214,11 +214,14 @@ Verified end to end against real Docker: fleet by label, live CPU/memory/network
 histories, Valheim's log parsed into a roster and a `world save = 314` metric
 tile, with no game-specific code in any view.
 
-Next is the rest of **M3** — Zomboid: two config syntaxes, RCON, Workshop
-mods with load order. The settings form and the apply diff already exist and
-were built against Valheim, so Zomboid is the test of whether the interface
-was right. Expect `Schema` and `Compile` to change; that is the point of
-doing it at M3.
+**Two games, and no third planned.** Palworld was on the roadmap at M4 and has
+been dropped; adding a game is a package and a line in `games/all`, so another
+one is work to be done rather than a milestone to be reached.
+
+What is left is the rest of **M4**: reordering the mod load order from the
+Mods screen, and checking the Workshop for updates. Both are now buildable —
+Zomboid is a game whose mods are declared in config and whose order matters,
+which is what those features needed and Valheim could not provide.
 
 ## Non-negotiables
 

@@ -89,10 +89,10 @@ func (c *Conn) HTTP(ctx context.Context, method, path string, body []byte) ([]by
 	if c == nil || c.addr == "" {
 		return nil, errors.New("no address to reach this server on")
 	}
-	// Declared but unused until a game with a REST API arrives — Palworld is
-	// the one DESIGN names. Returning a clear refusal rather than a broken
-	// request means the first game to need it finds an honest gap rather
-	// than a subtly wrong client.
+	// Declared and unused: no game Garrison supports has an HTTP API.
+	// Returning a clear refusal rather than a broken request means the first
+	// game to need one finds an honest gap rather than a subtly wrong
+	// client that has never been run.
 	_ = http.MethodGet
 	_ = method
 	_ = path

@@ -7,14 +7,14 @@
 ╭──────────────────────────────────────────────────────────────────────────────────────────╮
 │ SERVERS                               u start · S stop · r restart · b backup · U update │
 │   NAME             GAME      STATE       PLYR    CPU       MEM  UPTIME PORTS / TASK      │
-│ ▌ palworld-sat     palworld  ✕ crashed      —      —         —       — OOM killed        │
+│ ▌ factorio-main    factorio  ✕ crashed      —      —         —       — OOM killed        │
 │   valheim-huldra   valheim   ● running      0      —         —  2d 11h 2456/udp          │
 │   zomboid-main     zomboid   ● running      0      —         —  6d 04h stop 1/1 stop     │
 │   zomboid-testing  zomboid   ○ stopped      —      —         —       — exit 0            │
 ╰──────────────────────────────────────────────────────────────────────────────────────────╯
 ╭────────────────────────────────────────────╮ ╭───────────────────────────────────────────╮
 │ ATTENTION                            a ack │ │ ACTIVITY                      all servers │
-│ ✕ palworld-sat — OOM killed                │ │ Nothing yet.                              │
+│ ✕ factorio-main — OOM killed               │ │ Nothing yet.                              │
 │                                            │ │                                           │
 │                                            │ │                                           │
 │                                            │ │                                           │

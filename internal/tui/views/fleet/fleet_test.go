@@ -57,8 +57,8 @@ func containers() []host.Container {
 			Health:   model.Health{OK: true},
 		},
 		{
-			Instance: "palworld-sat",
-			Game:     "palworld",
+			Instance: "factorio-main",
+			Game:     "factorio",
 			State:    model.StateCrashed,
 			Detail:   "OOM killed",
 			ExitCode: 137,
@@ -133,7 +133,7 @@ func TestGoldenRenders(t *testing.T) {
 		},
 		{
 			name: "operation-in-flight", width: 92, height: 34,
-			snap: snapshot(taskRunning("palworld-sat", tasks.KindStart, 0)),
+			snap: snapshot(taskRunning("factorio-main", tasks.KindStart, 0)),
 		},
 		{
 			// A stop is a wait, not an instant, so the row says how long.
@@ -239,8 +239,8 @@ func TestStartAndStopEmitActions(t *testing.T) {
 		if !ok {
 			t.Fatalf("got %T, want tui.ActionMsg", cmd())
 		}
-		// Servers sort by name, so the cursor starts on palworld-sat.
-		if msg.Op != core.OpStart || msg.Server != "palworld-sat" {
+		// Servers sort by name, so the cursor starts on factorio-main.
+		if msg.Op != core.OpStart || msg.Server != "factorio-main" {
 			t.Errorf("action = %+v", msg)
 		}
 	})
@@ -258,7 +258,7 @@ func TestStartAndStopEmitActions(t *testing.T) {
 			t.Fatal("y produced no command")
 		}
 		msg := cmd().(tui.ActionMsg)
-		if msg.Op != core.OpStop || msg.Server != "palworld-sat" {
+		if msg.Op != core.OpStop || msg.Server != "factorio-main" {
 			t.Errorf("action = %+v", msg)
 		}
 		_ = after

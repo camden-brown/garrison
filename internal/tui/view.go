@@ -50,7 +50,8 @@ type View interface {
 
 	// Available gates the view on what the game can do, returning the
 	// sentence to show when it cannot: the Mods view itself answers
-	// "Palworld has no mod system", so no capability knowledge leaks into
+	// "Valheim has no mod system Garrison can manage", so no knowledge of
+	// which games those are leaks into
 	// the shell.
 	//
 	// Fleet-wide screens ignore the instance. From M1 the shell passes the

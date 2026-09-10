@@ -53,7 +53,8 @@ var banned = map[string][]string{
 // Stating this transitively would ban the layering the design asks for.
 //
 // tui may import games. Capability gating is a type assertion on a game, which
-// is how the Mods view answers "Palworld has no mod system" itself instead of
+// is how the Mods view answers "Valheim has no mod system Garrison can
+// manage" itself instead of
 // leaking that knowledge into the shell.
 var bannedDirect = map[string][]string{
 	"internal/tui": {"internal/host"},

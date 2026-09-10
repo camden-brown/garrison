@@ -100,7 +100,7 @@ reliable, so **state is always encoded twice** and colour is never the only
 carrier of meaning.
 
 | Glyph | State | Colour | Meaning |
-| --- | --- | --- | --- |
+| --- | --- | --- |
 | `●` | running | green | Up and healthcheck passing |
 | `◐` | transitioning | amber | Starting, stopping, updating |
 | `○` | stopped | grey | Deliberately down; exit code shown |
@@ -155,7 +155,7 @@ internal/
   host/       driver plan                           named host/, not runtime/
     docker/   driver stats logs exec events
   games/      game registry schema caps conn
-    zomboid/ valheim/ palworld/
+    zomboid/ valheim/
     all/                                            one blank import per game
   tasks/      engine lane kinds schedule persist
   services/   metrics logs mods rcon backup alerts
@@ -205,15 +205,15 @@ not build that until someone other than you wants to add a game.
 The point is the ragged right-hand side. These games agree on almost nothing,
 and the UI does not care.
 
-| | Project Zomboid | Valheim | Palworld |
-| --- | --- | --- | --- |
-| Steam app id | 380870 | 896660 | 2394010 |
-| Config surface | `servertest.ini` + `_SandboxVars.lua` (Lua table) | env vars + `adminlist.txt` | `PalWorldSettings.ini`, all options inside one `OptionSettings=(...)` line |
-| `Compile` writes | 2 files, 2 syntaxes | 0 files — all env, so changes need a recreate | 1 file, and that parenthesised format is exactly why this is per-game code |
-| `Rostered` | yes, RCON `players` | no — derived from `Parse` (handshake, `ZDOID`) | yes, REST `/v1/api/players` |
-| `Commandable` | yes, RCON | no — input line explains why | yes, RCON |
-| `Drainable` | yes: `servermsg`, `save`, `quit` | partial — no warn channel, so drain reduces to "wait for empty" | yes: `Broadcast`, `Save`, `Shutdown 60` |
-| `Moddable` | yes — Workshop, load order matters, IDs go in two config keys | yes — Thunderstore/BepInEx, dropped into a plugins dir | no — view replaced with an explanation |
+| | Project Zomboid | Valheim |
+| --- | --- | --- |
+| Steam app id | 380870 | 896660 |
+| Config surface | `servertest.ini` + `_SandboxVars.lua` (Lua table) | env vars + `adminlist.txt` |
+| `Compile` writes | 2 files, 2 syntaxes | 0 files — all env, so changes need a recreate |
+| `Rostered` | yes, RCON `players` | no — derived from `Parse` (handshake, `ZDOID`) |
+| `Commandable` | yes, RCON | no — input line explains why |
+| `Drainable` | yes: `servermsg`, `save` | no — nothing to warn players on, so a drain skips the wait and says so |
+| `Moddable` | yes — Workshop, load order matters, IDs go in two config keys | no — BepInEx plugins are files on disk, and this interface is shaped around mods a server downloads from its own config |
 | 4th tile metric | zombies alive | world save duration | base pals |
 | Stop signal | `SIGTERM`, 120s grace | `SIGINT` — the image traps it to save | `SIGTERM`, 60s grace |
 
@@ -263,7 +263,7 @@ show the same choice, and two cursors that can disagree about which server you
 are looking at is a bug waiting for a busy evening.
 
 `Available` is the piece that matters: the Mods view itself returns
-`(false, "Palworld has no mod system")`, so no capability knowledge leaks into
+`(false, "Valheim has no mod system Garrison can manage")`, so no capability knowledge leaks into
 the shell. The rail order, the number keys and the help overlay all derive from
 the registry slice, so adding a view is a package and a line.
 
@@ -352,7 +352,7 @@ backend `usage` includes page cache, so the honest figure is
 server looks like it is about to be OOM-killed.
 
 | Tier | Resolution | Span | Where | Feeds |
-| --- | --- | --- | --- | --- |
+| --- | --- | --- |
 | hot | 1s | 5 min, 300 pts | memory ring | dashboard sparklines, the live number |
 | warm | 10s | 1 h, 360 pts | memory ring | fleet strip, "was it spiking an hour ago" |
 | cold | 60s | 30 d | SQLite | occupancy, capacity decisions, survives restarts |
@@ -515,8 +515,9 @@ decisions are forced while the code is still small enough to change.
   wrong shows up here, which is the point of doing it at M3 rather than M6.
   Ship `Schema`, the settings form and the apply diff in this milestone.
 - **M4 — players and mods.** `Rostered` and `Moddable`, session history,
-  occupancy, the Mods view with reordering and update checks. Palworld as the
-  third game, to confirm a game with no mods degrades cleanly.
+  occupancy, the Mods view with reordering and update checks. A third game was
+  planned here to confirm that a game with no mods degrades cleanly; Valheim
+  turned out to be that game, so the third was dropped.
 - **M5 — provisioning and polish.** The wizard, port scanning, restore, ambient
   mode, the command palette, CLI subcommands, and the 80-column layouts.
 

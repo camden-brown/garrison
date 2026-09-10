@@ -17,9 +17,11 @@ the game has no slider for that combination, `ServerOptionsGUI.SetPreset` logs
 unusual, and runs with the setting unapplied. A typo in a schema would present
 as a difficulty setting that appears configured and silently is not.
 
-The same shape will recur. Zomboid at M3 has enumerated ini values, Palworld at
-M4 has a settings struct, and both will outlive whatever documentation we read
-while implementing them.
+The same shape will recur. Zomboid at M3 has enumerated ini values, and any
+game after it will have its own — all of which outlive whatever documentation
+we read while implementing them. (Zomboid has since landed and this held: 85
+of its graded settings carry the game's own numbering, read out of a config
+the server itself wrote.)
 
 ## Decision
 
