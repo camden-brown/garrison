@@ -352,10 +352,17 @@ fake encodes match the thing it stands in for.
 | **M4** ◐ | Players and mods | Built: the Players view — live roster, seven days of sessions, occupancy by hour. Mods lists what is configured; managing it needs a game whose mods are declared in config. Palworld not started. |
 | **M5** ◐ | Provisioning and polish | Built: the wizard with port scanning, restore, ambient mode, the palette, the `/` filter, the `:` command line, CLI subcommands, the `?` help overlay and 80-column layouts. |
 
-Milestones are marked ◐ where the screens and plumbing landed but the game
-that would exercise them has not. Three of the six outstanding debts —
-the console's command input, drain, and the roster's name pairing — are all
-waiting on the same thing: a game with a channel to talk to its server on.
+Three milestones are marked ◐, and not for the same reason. **M3 and M4** are
+waiting on a game: the screens and the plumbing landed, and Zomboid and
+Palworld — the plugins that would exercise the capabilities they degrade
+around — have not. **M5** is not waiting on anything but the last of the
+polish: two keybindings that are designed and unbound, and the config-file
+diff.
+
+That first reason is most of what is outstanding. Three of the six debts in
+[`CLAUDE.md`](CLAUDE.md) — the console's command input, drain, and the
+roster's name pairing — are one missing capability rather than three separate
+jobs: a game with a channel to talk to its server on.
 
 ## Contributing
 
