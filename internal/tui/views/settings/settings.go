@@ -41,7 +41,16 @@ type View struct {
 	field int
 
 	// confirming is set while an apply is waiting for a yes.
+	//
+	// typed and caret are the server's name being entered, and are used only
+	// for a WipeRisk change. DESIGN puts that friction in exactly three
+	// places — deleting a server, a WipeRisk setting, restoring over a live
+	// world — and this is one of them: for Valheim, WorldName decides which
+	// save file the server opens, so changing it does not rename a world, it
+	// abandons one.
 	confirming bool
+	typed      string
+	caret      int
 
 	// editing is set while a text field has the keyboard, with cursor the
 	// caret position within it.
@@ -95,6 +104,11 @@ var (
 	keyApply    = key.NewBinding(key.WithKeys("A"), key.WithHelp("A", "apply"))
 	keyYes      = key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "confirm"))
 	keyNo       = key.NewBinding(key.WithKeys("n", "esc"), key.WithHelp("n/esc", "cancel"))
+	keySubmit   = key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm"))
+	// Escape only, deliberately. keyNo binds "n" as well, and a server
+	// called "valheim-main" cannot be typed out if the n in it cancels the
+	// prompt — the same reason the Backups confirmation does not use it.
+	keyAbandon = key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel"))
 )
 
 func (v *View) Keys() []key.Binding {
@@ -116,12 +130,35 @@ func (v *View) Update(msg tea.Msg, f tui.Frame, snap core.Snapshot) (tui.View, t
 	// A pending apply swallows every other key, the same way the fleet's
 	// stop confirmation does.
 	if next.confirming {
+		// A wipe risk is confirmed by typing the name, not by a keystroke
+		// that a reflex can supply.
+		if worstImpact(srv, form) >= games.ImpactWipeRisk {
+			switch {
+			case key.Matches(msgKey, keyAbandon):
+				next.stopConfirming()
+				return &next, nil
+			case key.Matches(msgKey, keySubmit):
+				if next.typed != srv.Name {
+					// A near miss clears, so the next attempt starts from
+					// nothing rather than from a typo one key from right.
+					next.typed, next.caret = "", 0
+					return &next, nil
+				}
+				next.stopConfirming()
+				return &next, tui.Apply(srv.Name, needsRecreate(srv, form))
+			}
+			if typed, caret, handled := comp.EditKey(next.typed, next.caret, msgKey); handled {
+				next.typed, next.caret = typed, caret
+			}
+			return &next, nil
+		}
+
 		switch {
 		case key.Matches(msgKey, keyYes):
-			next.confirming = false
+			next.stopConfirming()
 			return &next, tui.Apply(srv.Name, needsRecreate(srv, form))
 		case key.Matches(msgKey, keyNo):
-			next.confirming = false
+			next.stopConfirming()
 		}
 		return &next, nil
 	}
@@ -262,6 +299,12 @@ func (v *View) clamp(form form) {
 }
 
 // focused is the field the keys act on, when the fields pane has them.
+func (v *View) stopConfirming() {
+	v.confirming = false
+	v.typed = ""
+	v.caret = 0
+}
+
 func (v *View) focused(form form) (games.Field, bool) {
 	if v.pane != paneFields {
 		return games.Field{}, false
@@ -568,6 +611,18 @@ func (v *View) Render(f tui.Frame, snap core.Snapshot) string {
 		}.Render(v.fieldList(t, srv, form, comp.Inner(fieldWidth))),
 	)
 
+	// The diff sits between the form and the footer while confirming, so the
+	// question and what it is a question about are on screen together.
+	if v.confirming {
+		if g, err := games.Get(srv.Game); err == nil {
+			panel := comp.Panel{
+				Theme: t, Title: "APPLY", Right: "what would be written",
+				Width: f.Width, Focused: true,
+			}.Render(v.renderDiff(t, srv, g, comp.Inner(f.Width), diffRows(f.Height)))
+			return body + "\n" + panel + "\n" + v.footer(f, srv, form)
+		}
+	}
+
 	return body + "\n" + v.footer(f, srv, form)
 }
 
@@ -696,9 +751,7 @@ func (v *View) footer(f tui.Frame, srv core.Server, form form) string {
 	}
 
 	if v.confirming {
-		return t.Accent.Render(comp.Truncate(
-			fmt.Sprintf("apply %d change%s to %s?  %s  ·  y / n",
-				pending, plural(pending), srv.Name, applyCost(worstImpact(srv, form))), f.Width))
+		return v.confirmPrompt(t, srv, form, f.Width)
 	}
 
 	keys := make([]string, 0, pending)

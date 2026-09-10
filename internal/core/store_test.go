@@ -402,13 +402,23 @@ func TestApplyingACleanFormDoesNothing(t *testing.T) {
 }
 
 type countingSaver struct {
-	mu sync.Mutex
-	n  int
+	mu      sync.Mutex
+	n       int
+	deleted []string
 }
 
 func (c *countingSaver) Save(model.Instance) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.n++
+	return nil
+}
+
+// Delete satisfies the Saver interface. Deleting is recorded rather than done,
+// which is all a fake needs.
+func (c *countingSaver) Delete(name string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.deleted = append(c.deleted, name)
 	return nil
 }

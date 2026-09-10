@@ -23,6 +23,7 @@ type Tasks interface {
 // Saver writes a server's configuration, for the apply task to hand on.
 type Saver interface {
 	Save(inst model.Instance) error
+	Delete(name string) error
 }
 
 // Start brings a server up, creating its container if it has none.
@@ -126,6 +127,28 @@ func (s *Store) CreateServer(ctx context.Context, inst model.Instance) {
 		return
 	}
 	s.Send(ctx, InstanceAdded{At: s.now(), Instance: inst})
+}
+
+// DeleteServer removes a server's container and configuration, and leaves its
+// world where it is.
+//
+// The confirmation is the view's — it is one of the three actions that asks
+// for the server's name typed out — but the restraint is here: nothing in this
+// path touches the data directory, so the worst a mistaken delete costs is
+// the configuration, which the task's compensation puts back.
+func (s *Store) DeleteServer(ctx context.Context, instance string) {
+	if s.saver == nil {
+		s.raise(ctx, instance, fmt.Errorf("%s: delete: no configuration store", instance))
+		return
+	}
+	inst, ok := s.Snapshot().Instance(instance)
+	if !ok {
+		s.raise(ctx, instance, fmt.Errorf("%s: delete: Garrison has no configuration for it, so there is nothing to remove", instance))
+		return
+	}
+	s.submit(ctx, instance, tasks.KindDelete, func(id string) *tasks.Task {
+		return tasks.Delete(id, instance, tasks.TriggerManual, s.saver, inst)
+	})
 }
 
 // Restore replaces a server's world with an archive.

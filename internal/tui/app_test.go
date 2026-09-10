@@ -49,6 +49,7 @@ type stubStore struct {
 	restored  []string
 	notices   []string
 	created   []model.Instance
+	deleted   []string
 	updated   []string
 	applied   []string
 }
@@ -84,6 +85,9 @@ func (s *stubStore) Backup(_ context.Context, instance string) {
 }
 func (s *stubStore) CreateServer(_ context.Context, inst model.Instance) {
 	s.created = append(s.created, inst)
+}
+func (s *stubStore) DeleteServer(_ context.Context, instance string) {
+	s.deleted = append(s.deleted, instance)
 }
 func (s *stubStore) Notify(_ context.Context, server, text string) {
 	s.notices = append(s.notices, server+": "+text)
@@ -1153,5 +1157,150 @@ func TestHelpFitsTheTerminal(t *testing.T) {
 				t.Errorf("width %d: help line %d is %d cells", width, i, w)
 			}
 		}
+	}
+}
+
+// configured builds a fleet whose servers Garrison has files for, which is
+// what delete needs — a container found by label with no configuration has
+// nothing of Garrison's own to remove.
+func configuredFleet() core.Snapshot {
+	insts := []model.Instance{
+		{Name: "a", Game: "valheim", Data: `C:\gameservers\a`},
+		{Name: "b", Game: "valheim", Data: `C:\gameservers\b`},
+	}
+	return core.Reduce(
+		core.Snapshot{Engine: core.Engine{Transport: "npipe"}},
+		core.InstancesLoaded{At: now, Instances: insts},
+		core.FleetObserved{At: now, Containers: []host.Container{
+			{Instance: "a", Game: "valheim", State: model.StateRunning},
+			{Instance: "b", Game: "valheim", State: model.StateStopped},
+		}},
+	)
+}
+
+func selectServer(app *tui.App, name string) {
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+	typeLine(app, name)
+	app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+}
+
+// The third of DESIGN's three friction points, and the one where the friction
+// is the whole feature.
+func TestDeleteNeedsTheNameTyped(t *testing.T) {
+	store := newStub(configuredFleet())
+	app := newApp(t, store, &stubView{})
+	selectServer(app, "a")
+
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'X'}})
+	if got := app.View(); !strings.Contains(got, "DELETE SERVER") {
+		t.Fatalf("X did not open a confirmation:\n%s", got)
+	}
+
+	// Enter with nothing typed, and with the wrong name, both do nothing.
+	app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	typeLine(app, "b")
+	app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if len(store.deleted) != 0 {
+		t.Fatalf("deleted %v before the name was right", store.deleted)
+	}
+
+	// The prompt is still open with the near miss cleared, so the right name
+	// goes straight in — pressing X again would type an X into the field,
+	// which is correct and not what this is testing.
+	typeLine(app, "a")
+	if _, cmd := app.Update(tea.KeyMsg{Type: tea.KeyEnter}); cmd != nil {
+		app.Update(cmd())
+	}
+	if len(store.deleted) != 1 || store.deleted[0] != "a" {
+		t.Errorf("deleted %v, want [a]", store.deleted)
+	}
+}
+
+// The sentence that makes the key safe to bind at all.
+func TestDeleteSaysTheWorldIsKept(t *testing.T) {
+	app := newApp(t, newStub(configuredFleet()), &stubView{})
+	selectServer(app, "a")
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'X'}})
+
+	got := app.View()
+	if !strings.Contains(got, "left exactly where it is") {
+		t.Errorf("the confirmation does not say the world survives:\n%s", got)
+	}
+	if !strings.Contains(got, `C:\gameservers\a`) {
+		t.Errorf("the confirmation does not name the data directory:\n%s", got)
+	}
+}
+
+func TestDeleteEscapeCancels(t *testing.T) {
+	store := newStub(configuredFleet())
+	app := newApp(t, store, &stubView{})
+	selectServer(app, "a")
+
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'X'}})
+	typeLine(app, "a")
+	app.Update(tea.KeyMsg{Type: tea.KeyEsc})
+
+	if len(store.deleted) != 0 {
+		t.Errorf("esc deleted %v anyway", store.deleted)
+	}
+	if strings.Contains(app.View(), "DELETE SERVER") {
+		t.Error("esc left the confirmation up")
+	}
+}
+
+// A container Garrison has no file for has nothing of its own to delete, and
+// it would be found again on the next poll.
+func TestDeleteRefusesAnUnconfiguredServer(t *testing.T) {
+	store := newStub(snapshot()) // labelled containers, no instances
+	app := newApp(t, store, &stubView{})
+	selectServer(app, "a")
+
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'X'}})
+
+	if strings.Contains(app.View(), "DELETE SERVER") {
+		t.Error("an unconfigured server was offered for deletion")
+	}
+	if len(store.notices) == 0 {
+		t.Error("the refusal said nothing")
+	}
+}
+
+// Comparing two servers means the same screen for each in turn, which the
+// rail's arrow keys cannot do without taking focus off the stage.
+func TestBracketsStepBetweenServersKeepingTheScreen(t *testing.T) {
+	v := &stubView{}
+	app := newApp(t, newStub(configuredFleet()), v)
+	selectServer(app, "a")
+
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}}) // a screen
+	app.View()
+	screen := v.rendered.Server
+	if screen != "a" {
+		t.Fatalf("frame server = %q, want a", screen)
+	}
+
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}})
+	app.View()
+	if v.rendered.Server != "b" {
+		t.Errorf("] gave frame server %q, want b", v.rendered.Server)
+	}
+
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}})
+	app.View()
+	if v.rendered.Server != "a" {
+		t.Errorf("[ gave frame server %q, want a", v.rendered.Server)
+	}
+}
+
+// A fleet is a ring you cycle, not a list you fall off the end of.
+func TestSteppingWraps(t *testing.T) {
+	v := &stubView{}
+	app := newApp(t, newStub(configuredFleet()), v)
+	selectServer(app, "b") // the last one
+
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}})
+	app.View()
+	if v.rendered.Server != "a" {
+		t.Errorf("stepping past the end gave %q, want a wrap to a", v.rendered.Server)
 	}
 }

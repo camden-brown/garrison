@@ -59,6 +59,9 @@ summary for a scheduled job.
 - `internal/store` — SQLite. The task journal, the cold metric tier and the
   events worth keeping, with append-only migrations.
 - `internal/config` — one TOML file per server, atomic saves, hand-editable.
+  `Delete` removes a server's file and never its data directory; `tasks.Delete`
+  writes the file back if the container removal fails, so a half-done delete
+  leaves a server Garrison still knows about rather than an orphan.
 - `internal/services/backup` — tar+zstd beside the world it came from, with
   a restore that refuses to write outside its destination.
 - `internal/services/scheduler` — cron, with the two policies that decide
@@ -73,9 +76,15 @@ summary for a scheduled job.
   `comp` (panel, tile, sparkline, text, input, filter, log). All eight views
   are built: fleet, dashboard, console, players, mods, settings, tasks,
   backups. The shell also owns the things that are not screens — the ":"
-  command line, ctrl+P palette, "n" provisioner, "F" ambient mode, "y" share
-  and the "?" help overlay, which is generated from the View contract's Keys
-  rather than written out.
+  command line, ctrl+P palette, "n" provisioner, "X" delete, "[" and "]" to
+  step between servers, "F" ambient mode, "y" share and the "?" help overlay,
+  which is generated from the View contract's Keys rather than written out.
+
+  **The three typed confirmations are all built and there are only three**, as
+  DESIGN requires: deleting a server, restoring over a live world, and
+  applying a setting the game marks ImpactWipeRisk. Each asks for the server's
+  name in full. Note that they cancel on esc alone and never on "n" — a server
+  called valheim-main cannot be typed out if the n in it dismisses the prompt.
 
   Sharing copies over **OSC 52** (`termenv.Copy`, already a direct dependency)
   and shows the same text on screen, because a terminal is free to ignore the
@@ -129,10 +138,9 @@ Debts still outstanding, all deliberate and all noted in the code:
    ~32× slower than a volume for small-file writes, so this is now a number
    rather than a suspicion, and it is the strongest argument for giving Mount
    a volume form.
-4. Restore has no *scheduled* form. `tasks.Restore` and the Backups screen
-   exist, but a restore is always something a person asked for by typing the
-   server's name — there is no policy that would run one unattended, and no
-   obvious one worth inventing.
+4. Restore and delete have no *scheduled* form, deliberately. Both are things
+   a person asked for by typing a server's name; there is no policy that would
+   run either unattended and none worth inventing.
 5. The Mods screen lists what is configured and cannot change it. `Moddable`
    is designed around mods a server downloads from its own config (Zomboid's
    Workshop ids), and Valheim's BepInEx plugins are files with no such
@@ -149,8 +157,13 @@ is a real 16k ring ([ADR 0010](docs/decisions/0010-the-console-ring-shares-its-s
 with a Console screen over it, the settings form can edit text, and backups
 have a screen with a restore behind a typed confirmation. Closed since then:
 Players and Mods, the "/" filter, the ":" command line, the ctrl+P palette,
-ambient mode, the provisioner, and start/stop/restart/backup/update as
-subcommands that wait for their task and exit on its result.
+ambient mode, the provisioner, delete, the server steppers, the generated
+apply diff, and start/stop/restart/backup/update as subcommands that wait for
+their task and exit on its result.
+
+**M5 is done and M3/M4 are held open by one thing:** a second game. The
+console's command input, drain and the roster's name pairing are the same
+missing capability three times over, not three jobs.
 
 **Restore is the one destructive path that undoes itself.** `tasks.Restore`
 stops the server, archives the world it is about to replace, unpacks the chosen

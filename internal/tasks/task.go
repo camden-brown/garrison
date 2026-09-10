@@ -32,6 +32,7 @@ const (
 	KindModSync     Kind = "modsync"
 	KindApplyConfig Kind = "apply-config"
 	KindCreate      Kind = "create"
+	KindDelete      Kind = "delete"
 )
 
 // State is where a task got to.

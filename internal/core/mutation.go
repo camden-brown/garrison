@@ -439,6 +439,14 @@ func (m TaskProgressed) apply(s Snapshot) Snapshot {
 	}
 	s.Tasks = next
 
+	// A delete that finished means the server is gone, and the snapshot is
+	// where "gone" has to show. Reacting to the completed fact rather than
+	// to the action that asked for it means a delete run as a subcommand
+	// drops the row too, and a delete that rolled back does not.
+	if m.Progress.Kind == tasks.KindDelete && m.Progress.State == tasks.StateDone {
+		s = s.forget(m.Progress.Server)
+	}
+
 	// A task that failed is worth saying out loud. One that was cancelled
 	// is not: the operator asked for it and already knows.
 	if m.Progress.State == tasks.StateFailed || m.Progress.State == tasks.StateRolledBack {
@@ -728,4 +736,30 @@ func (m InstanceAdded) apply(s Snapshot) Snapshot {
 	s.instances = byName
 
 	return s.withServers(merge(s, observedFrom(s.Servers)))
+}
+
+// forget drops a server and its configuration from the snapshot.
+//
+// Both halves, because they are different sets: the instance is what the file
+// said and the row is what Docker showed. A delete removes the file and the
+// container, so leaving either behind would show a server that no longer
+// exists in one place and not the other.
+func (s Snapshot) forget(name string) Snapshot {
+	if _, ok := s.instances[name]; ok {
+		next := make(map[string]model.Instance, len(s.instances))
+		for k, v := range s.instances {
+			if k != name {
+				next[k] = v
+			}
+		}
+		s.instances = next
+	}
+
+	servers := make([]Server, 0, len(s.Servers))
+	for _, srv := range s.Servers {
+		if srv.Name != name {
+			servers = append(servers, srv)
+		}
+	}
+	return s.withServers(servers)
 }

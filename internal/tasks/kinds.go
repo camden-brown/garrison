@@ -14,6 +14,59 @@ import (
 // not import internal/config; config.Store satisfies it.
 type Saver interface {
 	Save(inst model.Instance) error
+	// Delete removes a server's configuration file.
+	Delete(name string) error
+}
+
+// Delete takes a server out of Garrison: the container goes, the
+// configuration goes, and the world stays.
+//
+// Not deleting the data is the whole shape of it. DESIGN puts this among the
+// three actions that ask for the server's name typed out, and even behind that
+// prompt a key that could erase a world nobody has a backup of is a key with
+// no business existing. What this removes is everything Garrison made; what it
+// leaves is the one thing it did not.
+//
+// The configuration is deleted last and its compensation writes it back, so a
+// delete that fails at the container leaves a server Garrison still knows
+// about rather than an orphaned directory and no record of what it was.
+func Delete(id, server string, trigger Trigger, save Saver, inst model.Instance) *Task {
+	return &Task{
+		ID: id, Server: server, Kind: KindDelete, Trigger: trigger,
+		Steps: []Step{stopStep(), removeStep(), forgetStep(save, inst)},
+	}
+}
+
+func forgetStep(save Saver, inst model.Instance) Step {
+	return Step{
+		Name: "forget the configuration",
+		Est:  time.Second,
+		Run: func(ctx context.Context, s *StepCtx) error {
+			if save == nil {
+				return errors.New("no configuration store, so there is nothing to forget")
+			}
+			if err := save.Delete(inst.Name); err != nil {
+				return err
+			}
+			s.Say("removed the server's configuration; " + describeData(inst))
+			return nil
+		},
+		Undo: func(ctx context.Context, s *StepCtx) error {
+			if save == nil {
+				return nil
+			}
+			return save.Save(inst)
+		},
+	}
+}
+
+// describeData says where the world was left, because the value of this
+// command is as much what it did not do as what it did.
+func describeData(inst model.Instance) string {
+	if inst.Data == "" {
+		return "there was no data directory"
+	}
+	return "the world is still at " + inst.Data
 }
 
 // Stop behaviour when the plan does not say. A game's Plan supplies both and

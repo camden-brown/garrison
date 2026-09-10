@@ -29,6 +29,8 @@ var shellKeys = []key.Binding{
 	key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter (where a screen has one)")),
 	key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "copy the server's join details")),
 	key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new server")),
+	key.NewBinding(key.WithKeys("X"), key.WithHelp("X", "delete server — keeps the world")),
+	key.NewBinding(key.WithKeys("[", "]"), key.WithHelp("[ ]", "previous / next server")),
 	key.NewBinding(key.WithKeys("F"), key.WithHelp("F", "ambient mode")),
 	key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "this help")),
 	key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),

@@ -288,6 +288,7 @@ const (
 	OpUpdate  Op = "update"
 	OpBackup  Op = "backup"
 	OpRestore Op = "restore"
+	OpDelete  Op = "delete"
 )
 
 // Present is the progressive form, which is what a busy row says.
@@ -307,6 +308,8 @@ func (o Op) Present() string {
 		return "backing up"
 	case OpRestore:
 		return "restoring"
+	case OpDelete:
+		return "deleting"
 	}
 	return ""
 }

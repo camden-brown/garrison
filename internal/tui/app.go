@@ -34,6 +34,7 @@ type Store interface {
 	// only caller, and it is here rather than behind a message because it
 	// answers immediately — there is no task to watch.
 	CreateServer(ctx context.Context, inst model.Instance)
+	DeleteServer(ctx context.Context, instance string)
 
 	// Notify is how the shell reports a command line that made no sense.
 	// It is the store's because a notice outlives the keystroke that
@@ -88,6 +89,14 @@ type App struct {
 
 	// helping is the "?" overlay.
 	helping bool
+
+	// deleting is the server whose delete confirmation is up, with the name
+	// being typed into it. Like the Backups restore prompt this is view
+	// state on purpose: a confirmation lost to a resize is a destructive
+	// action that did not happen.
+	deleting    string
+	deleteTyped string
+	deleteCaret int
 
 	// sharing holds the text "y" copied, shown until a key dismisses it.
 	// It is not a copy of state: it is a record of what left the process,
@@ -224,6 +233,9 @@ func (a *App) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if a.wizard.open {
 		return a.wizardKey(msg)
 	}
+	if a.deleting != "" {
+		return a.deleteKey(msg)
+	}
 
 	// The share panel is a receipt, not a mode: any key clears it and is
 	// otherwise handled normally, so it never gets in the way.
@@ -287,6 +299,18 @@ func (a *App) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "?":
 		a.helping = true
+		return a, nil
+
+	case "X":
+		a.startDelete()
+		return a, nil
+
+	case "[":
+		a.stepServer(-1)
+		return a, nil
+
+	case "]":
+		a.stepServer(+1)
 		return a, nil
 
 	case "1", "2", "3", "4", "5", "6", "7":
@@ -431,6 +455,8 @@ func (a *App) dispatch(msg ActionMsg) tea.Cmd {
 		a.store.Backup(a.ctx, msg.Server)
 	case core.OpRestore:
 		a.store.Restore(a.ctx, msg.Server, msg.Archive)
+	case core.OpDelete:
+		a.store.DeleteServer(a.ctx, msg.Server)
 	case core.OpUpdate:
 		a.store.Update(a.ctx, msg.Server)
 	case core.OpApply:
@@ -488,6 +514,12 @@ func (a *App) View() string {
 			body = 3
 		}
 	}
+	if a.deleting != "" {
+		body -= deleteRows
+		if body < 3 {
+			body = 3
+		}
+	}
 
 	// Under 100 columns the rail collapses and navigation moves entirely to
 	// the keys, per DESIGN §3. A 26-column rail beside a 70-column terminal
@@ -522,6 +554,9 @@ func (a *App) View() string {
 	}
 	if a.helping {
 		out += "\n" + a.helpView(a.width)
+	}
+	if a.deleting != "" {
+		out += "\n" + a.deleteView(a.width)
 	}
 	if line := a.commandLine(a.width); line != "" {
 		out += "\n" + line

@@ -39,9 +39,10 @@ func (r driverResolver) Instance(string) (model.Instance, tasks.Game, error) {
 }
 
 type memSaver struct {
-	mu    sync.Mutex
-	saved []model.Instance
-	err   error
+	mu      sync.Mutex
+	saved   []model.Instance
+	deleted []string
+	err     error
 }
 
 func (m *memSaver) Save(inst model.Instance) error {
@@ -499,5 +500,75 @@ func TestRestoreWithNoArchiveNamedFails(t *testing.T) {
 	p := runTask(t, d, res, tasks.Restore("t1", "a", tasks.TriggerManual, &stubArchive{}, ""))
 	if p.State == tasks.StateDone {
 		t.Fatal("a restore with no archive named reported success")
+	}
+}
+
+// Delete satisfies the Saver interface. Deleting is recorded rather than done,
+// which is all a fake needs.
+func (m *memSaver) Delete(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.deleted = append(m.deleted, name)
+	return nil
+}
+
+// Delete removes everything Garrison made and nothing it did not. The world
+// is the point: even behind a typed confirmation, a key that could erase a
+// save nobody has a backup of is a key with no business existing.
+func TestDeleteRemovesTheContainerAndTheConfigButNotTheWorld(t *testing.T) {
+	d := fake.New(healthy("a"))
+	d.SetClock(func() time.Time { return at })
+	inst := model.Instance{Name: "a", Game: "valheim", Data: "/data"}
+	res := driverResolver{inst: inst, game: valheimGame{}}
+	saver := &memSaver{}
+
+	p := runTask(t, d, res, tasks.Delete("t1", "a", tasks.TriggerManual, saver, inst))
+	if p.State != tasks.StateDone {
+		t.Fatalf("state = %v (%s), want done", p.State, p.Err)
+	}
+
+	var removed bool
+	for _, c := range d.Calls() {
+		if strings.HasPrefix(c, "Remove(") {
+			removed = true
+		}
+		// The data volume must not be swept up with the container.
+		if strings.Contains(c, "Remove(") && strings.Contains(c, "true") {
+			t.Errorf("the container was removed with its volumes: %s", c)
+		}
+	}
+	if !removed {
+		t.Error("the container was not removed")
+	}
+
+	saver.mu.Lock()
+	deleted := append([]string(nil), saver.deleted...)
+	saver.mu.Unlock()
+	if len(deleted) != 1 || deleted[0] != "a" {
+		t.Errorf("deleted config %v, want [a]", deleted)
+	}
+}
+
+// The configuration is removed last and its compensation writes it back, so a
+// delete that fails leaves a server Garrison still knows about rather than an
+// orphaned directory and no record of what it was.
+func TestAFailedDeleteKeepsTheServerKnown(t *testing.T) {
+	d := fake.New(healthy("a"))
+	d.SetClock(func() time.Time { return at })
+	d.SetFail("Remove", errors.New("container is in use"))
+	inst := model.Instance{Name: "a", Game: "valheim", Data: "/data"}
+	res := driverResolver{inst: inst, game: valheimGame{}}
+	saver := &memSaver{}
+
+	p := runTask(t, d, res, tasks.Delete("t1", "a", tasks.TriggerManual, saver, inst))
+	if p.State == tasks.StateDone {
+		t.Fatal("a delete whose container removal failed reported success")
+	}
+
+	saver.mu.Lock()
+	deleted := append([]string(nil), saver.deleted...)
+	saver.mu.Unlock()
+	if len(deleted) != 0 {
+		t.Errorf("the configuration was deleted despite the failure: %v", deleted)
 	}
 }
