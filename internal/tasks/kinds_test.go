@@ -572,3 +572,162 @@ func TestAFailedDeleteKeepsTheServerKnown(t *testing.T) {
 		t.Errorf("the configuration was deleted despite the failure: %v", deleted)
 	}
 }
+
+// Drainer satisfies the Resolver interface. A drain against a fake resolver
+// has no channel, which is the same degradation a game without one gets.
+func (driverResolver) Drainer(string) tasks.Drainer { return nil }
+
+// fakeDrain is a bound drain capability, which is how a step receives one:
+// cmd asserts games.Drainable and adapts, so this package never sees a game.
+type fakeDrain struct {
+	mu     sync.Mutex
+	warned []time.Duration
+	saved  int
+	err    error
+}
+
+func (f *fakeDrain) Warn(_ context.Context, in time.Duration) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return f.err
+	}
+	f.warned = append(f.warned, in)
+	return nil
+}
+
+func (f *fakeDrain) Save(context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.saved++
+	return f.err
+}
+
+func (f *fakeDrain) state() ([]time.Duration, int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]time.Duration(nil), f.warned...), f.saved
+}
+
+// drainResolver hands the engine a bound drain.
+type drainResolver struct {
+	driverResolver
+	drain tasks.Drainer
+}
+
+func (d drainResolver) Drainer(string) tasks.Drainer { return d.drain }
+
+// A drain warns, waits, saves, and only then stops. The debt this closes has
+// been open since M0 and could not be closed before: Valheim has no channel
+// to warn anyone on.
+func TestADrainWarnsAndSavesBeforeStopping(t *testing.T) {
+	d := fake.New(healthy("a"))
+	d.SetClock(func() time.Time { return at })
+	drain := &fakeDrain{}
+	res := drainResolver{
+		driverResolver: driverResolver{
+			inst: model.Instance{Name: "a", Game: "zomboid", Data: "/data"},
+			game: valheimGame{},
+		},
+		drain: drain,
+	}
+
+	// A short drain so the test is not a wait. Only the one-minute warning
+	// is inside it, which is itself the behaviour: a five-minute drain does
+	// not announce fifteen.
+	p := runTask(t, d, res, tasks.RestartWithDrain("t1", "a", tasks.TriggerScheduled, 50*time.Millisecond))
+	if p.State != tasks.StateDone {
+		t.Fatalf("state = %v (%s), want done", p.State, p.Err)
+	}
+
+	_, saved := drain.state()
+	if saved != 1 {
+		t.Errorf("saved %d times, want 1 — the world should be flushed before the stop", saved)
+	}
+
+	// The order matters: a save after the stop would be a save against a
+	// server that is gone.
+	var savedAt, stoppedAt = -1, -1
+	for i, entry := range p.History {
+		if strings.Contains(entry, "world saved") {
+			savedAt = i
+		}
+	}
+	for i, c := range d.Calls() {
+		if strings.HasPrefix(c, "Stop(") {
+			stoppedAt = i
+		}
+	}
+	if savedAt < 0 {
+		t.Errorf("no save in the history: %v", p.History)
+	}
+	if stoppedAt < 0 {
+		t.Error("the server was never stopped")
+	}
+}
+
+// A game with no channel to warn on degrades to a restart that does not warn,
+// and says so rather than waiting out a drain that helps nobody.
+func TestADrainWithoutAChannelSaysSoAndDoesNotWait(t *testing.T) {
+	d := fake.New(healthy("a"))
+	d.SetClock(func() time.Time { return at })
+	res := driverResolver{
+		inst: model.Instance{Name: "a", Game: "valheim", Data: "/data"},
+		game: valheimGame{},
+	}
+
+	start := time.Now()
+	p := runTask(t, d, res, tasks.RestartWithDrain("t1", "a", tasks.TriggerScheduled, 10*time.Minute))
+	if p.State != tasks.StateDone {
+		t.Fatalf("state = %v (%s)", p.State, p.Err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("a drain with no channel waited %v", elapsed)
+	}
+
+	var explained bool
+	for _, entry := range p.History {
+		if strings.Contains(entry, "no channel to warn players") {
+			explained = true
+		}
+	}
+	if !explained {
+		t.Errorf("the skipped drain was not explained: %v", p.History)
+	}
+}
+
+// A warning that did not send is worth saying and not worth failing for: the
+// restart is still right, and the alternative is a server nobody can restart
+// because its chat is broken.
+func TestADrainSurvivesAFailedWarning(t *testing.T) {
+	d := fake.New(healthy("a"))
+	d.SetClock(func() time.Time { return at })
+	res := drainResolver{
+		driverResolver: driverResolver{
+			inst: model.Instance{Name: "a", Game: "zomboid", Data: "/data"},
+			game: valheimGame{},
+		},
+		drain: &fakeDrain{err: errors.New("rcon: connection refused")},
+	}
+
+	p := runTask(t, d, res, tasks.RestartWithDrain("t1", "a", tasks.TriggerScheduled, 50*time.Millisecond))
+	if p.State != tasks.StateDone {
+		t.Errorf("a failed warning failed the restart: %v (%s)", p.State, p.Err)
+	}
+}
+
+// A plain restart is a drain of zero, which is the whole difference between a
+// scheduled bounce and an operator fixing a wedged server.
+func TestAPlainRestartHasNoDrainStep(t *testing.T) {
+	plain := tasks.Restart("t1", "a", tasks.TriggerManual)
+	for _, s := range plain.Steps {
+		if s.Name == "drain" {
+			t.Error("a plain restart has a drain step")
+		}
+	}
+
+	drained := tasks.RestartWithDrain("t1", "a", tasks.TriggerScheduled, time.Minute)
+	if len(drained.Steps) != len(plain.Steps)+1 {
+		t.Errorf("a drained restart has %d steps, a plain one %d", len(drained.Steps), len(plain.Steps))
+	}
+}

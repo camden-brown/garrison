@@ -36,6 +36,11 @@ type Store interface {
 	CreateServer(ctx context.Context, inst model.Instance)
 	DeleteServer(ctx context.Context, instance string)
 
+	// SendCommand runs a console command. The reply comes back as console
+	// output rather than as a return value, which is what keeps the view
+	// out of the request.
+	SendCommand(ctx context.Context, instance, text string)
+
 	// Notify is how the shell reports a command line that made no sense.
 	// It is the store's because a notice outlives the keystroke that
 	// caused it — the fleet's attention pane shows the same list.
@@ -199,6 +204,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case CancelTaskMsg:
 		a.store.CancelTask(a.ctx, msg.ID)
+		return a, nil
+
+	case CommandMsg:
+		a.store.SendCommand(a.ctx, msg.Server, msg.Text)
 		return a, nil
 
 	case tea.KeyMsg:

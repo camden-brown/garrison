@@ -85,9 +85,100 @@ const (
 // change what is on disk. Keeping them the same shape is what makes both
 // behave identically when they fail halfway.
 func Restart(id, server string, trigger Trigger) *Task {
+	return RestartWithDrain(id, server, trigger, 0)
+}
+
+// DrainWarnings are when players are told, counting down to the stop.
+//
+// DESIGN's figures. They are spaced the way somebody actually reacts: a
+// quarter of an hour to finish what you are doing, five minutes to get
+// somewhere safe, one minute to stop moving.
+var DrainWarnings = []time.Duration{15 * time.Minute, 5 * time.Minute, time.Minute}
+
+// RestartWithDrain warns players, waits, saves, and then restarts.
+//
+// A drain of zero is a restart, which is what the plain Restart is. That is
+// the whole difference: a scheduled nightly bounce wants fifteen minutes of
+// warning and an operator fixing a wedged server wants none, and both are the
+// same sequence with a different first step.
+//
+// The warning is a capability, so a game with no channel to speak to its
+// players on degrades to a restart that does not warn them — and says so in
+// the task's own history rather than silently skipping.
+func RestartWithDrain(id, server string, trigger Trigger, drain time.Duration) *Task {
+	steps := []Step{}
+	if drain > 0 {
+		steps = append(steps, drainStep(drain))
+	}
+	steps = append(steps, stopStep(), startStep(), healthStep())
+
 	return &Task{
 		ID: id, Server: server, Kind: KindRestart, Trigger: trigger,
-		Steps: []Step{stopStep(), startStep(), healthStep()},
+		Steps: steps,
+	}
+}
+
+// drainStep warns and waits.
+//
+// It has no compensation and needs none: it changes nothing. Nothing it does
+// is undoable because nothing it does is a change — the world is exactly as it
+// was, and the players have been told something that turned out not to happen,
+// which is a disappointment rather than damage.
+func drainStep(drain time.Duration) Step {
+	return Step{
+		Name: "drain",
+		Est:  drain,
+		Run: func(ctx context.Context, s *StepCtx) error {
+			if s.Drain == nil {
+				// Either the game has no channel or the server is not
+				// reachable. Waiting out the drain anyway would be a delay
+				// that helps nobody, so it is skipped and named.
+				s.Say("no channel to warn players on; restarting without a drain")
+				return nil
+			}
+
+			deadline := time.Now().Add(drain)
+			for _, at := range DrainWarnings {
+				if at > drain {
+					// A five-minute drain does not announce fifteen.
+					continue
+				}
+				wait := time.Until(deadline.Add(-at))
+				if wait > 0 {
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					case <-time.After(wait):
+					}
+				}
+				if err := s.Drain.Warn(ctx, at); err != nil {
+					// A warning that did not send is worth saying and not
+					// worth failing for: the restart is still the right
+					// thing to do and the alternative is a server nobody
+					// can restart because its chat is broken.
+					s.Say("could not warn players: " + err.Error())
+					break
+				}
+				s.Say("warned players: " + at.String())
+			}
+
+			if wait := time.Until(deadline); wait > 0 {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(wait):
+				}
+			}
+
+			// Save before the stop, so the world on disk is one a player
+			// would recognise rather than whatever the last autosave caught.
+			if err := s.Drain.Save(ctx); err != nil {
+				s.Say("could not ask the server to save: " + err.Error())
+			} else {
+				s.Say("world saved")
+			}
+			return nil
+		},
 	}
 }
 

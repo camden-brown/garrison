@@ -50,6 +50,7 @@ type stubStore struct {
 	notices   []string
 	created   []model.Instance
 	deleted   []string
+	commands  []string
 	updated   []string
 	applied   []string
 }
@@ -88,6 +89,9 @@ func (s *stubStore) CreateServer(_ context.Context, inst model.Instance) {
 }
 func (s *stubStore) DeleteServer(_ context.Context, instance string) {
 	s.deleted = append(s.deleted, instance)
+}
+func (s *stubStore) SendCommand(_ context.Context, instance, text string) {
+	s.commands = append(s.commands, instance+": "+text)
 }
 func (s *stubStore) Notify(_ context.Context, server, text string) {
 	s.notices = append(s.notices, server+": "+text)

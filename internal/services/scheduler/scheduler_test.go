@@ -35,10 +35,14 @@ func (f *fleet) Schedules() []scheduler.Job {
 	return f.jobs
 }
 
-func (f *fleet) Submit(_ context.Context, server string, kind tasks.Kind, trigger tasks.Trigger) {
+func (f *fleet) Submit(_ context.Context, server string, kind tasks.Kind, trigger tasks.Trigger, drain time.Duration) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.fired = append(f.fired, string(kind)+"@"+server+"/"+trigger.String())
+	entry := string(kind) + "@" + server + "/" + trigger.String()
+	if drain > 0 {
+		entry += "/drain=" + drain.String()
+	}
+	f.fired = append(f.fired, entry)
 }
 
 func (f *fleet) Notify(_ context.Context, server, text string) {

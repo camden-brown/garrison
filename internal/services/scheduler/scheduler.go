@@ -51,7 +51,10 @@ type Fleet interface {
 	// Players is how many are connected, and whether that is known at all.
 	Players(server string) (n int, known bool)
 	Schedules() []Job
-	Submit(ctx context.Context, server string, kind tasks.Kind, trigger tasks.Trigger)
+	// Submit runs a due job. drain is how long to warn players for before a
+	// restart, zero for none — the scheduler has parsed it out of the
+	// server's TOML since M2 and until now had nowhere to send it.
+	Submit(ctx context.Context, server string, kind tasks.Kind, trigger tasks.Trigger, drain time.Duration)
 	// Notify reports something worth saying: a job deferred, or given up on.
 	Notify(ctx context.Context, server, text string)
 }
@@ -185,7 +188,7 @@ func (s *Scheduler) Check(ctx context.Context) {
 
 		delete(s.deferred, key)
 		s.lastRun[key] = now
-		s.Fleet.Submit(ctx, job.Server, job.Kind, tasks.TriggerScheduled)
+		s.Fleet.Submit(ctx, job.Server, job.Kind, tasks.TriggerScheduled, job.Drain)
 	}
 }
 

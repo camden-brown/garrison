@@ -61,3 +61,8 @@ func (s *Store) BackupsListed(ctx context.Context, at time.Time, server string, 
 func (s *Store) SessionsListed(ctx context.Context, at time.Time, server string, sessions []model.Session) {
 	s.Send(ctx, SessionsListed{At: at, Server: server, Sessions: sessions})
 }
+
+// RosterObserved records who a server says is connected.
+func (s *Store) RosterObserved(ctx context.Context, at time.Time, server string, players []model.Player) {
+	s.Send(ctx, RosterObserved{At: at, Server: server, Players: players})
+}

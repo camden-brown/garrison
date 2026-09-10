@@ -34,6 +34,24 @@ type Journal interface {
 // The engine is handed one rather than reaching for config itself.
 type Resolver interface {
 	Instance(server string) (model.Instance, Game, error)
+
+	// Drainer is what a drain needs, with the transport already bound, or
+	// nil when this server has no way to warn its players.
+	//
+	// Pre-bound because this package must not import internal/games:
+	// internal/store depends on tasks, and the dependency rule forbids
+	// anything under store from reaching games. So cmd — which is allowed
+	// to know both — asserts games.Drainable and adapts it to this. The
+	// arch test is what found that, which is the whole reason it exists.
+	Drainer(server string) Drainer
+}
+
+// Drainer is the narrow capability a drain uses.
+type Drainer interface {
+	// Warn tells everyone connected that the server goes down in `in`.
+	Warn(ctx context.Context, in time.Duration) error
+	// Save flushes the world.
+	Save(ctx context.Context) error
 }
 
 // Engine runs tasks, one at a time per server.
@@ -240,6 +258,7 @@ func (e *Engine) execute(ctx context.Context, t *Task) Progress {
 		Driver:   e.driver,
 		Instance: inst,
 		Game:     game,
+		Drain:    e.resolve.Drainer(t.Server),
 		Values:   map[string]any{},
 	}
 	sc.Log = func(msg string) { p.History = append(p.History, msg) }

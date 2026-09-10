@@ -113,6 +113,12 @@ type StepCtx struct {
 	Instance model.Instance
 	Game     Game
 
+	// Drain is the warn-and-save capability, already bound to a transport,
+	// and nil for a game that has none or a server that is not running.
+	// Drain is the only step that needs one, and without it a restart
+	// degrades to one that does not warn players and says so.
+	Drain Drainer
+
 	// Values carries state between steps of one task — the snapshot a later
 	// step restores, the container id a create produced. It is a map rather
 	// than fields because the set differs per kind, and a struct with every

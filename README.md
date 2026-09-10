@@ -48,24 +48,26 @@ are written once and work the same for every game.
 - **Live dashboards** — CPU, memory and player sparklines at 1-second
   resolution, plus a fourth tile the game plugin supplies itself: zombies alive
   for Zomboid, world-save duration for Valheim.
-- **Console** — classified log lines (chat, joins, saves, errors) over a
-  16k-line ring, filterable by class or by text, with a day separator so
-  crossing midnight is visible. Repeated lines collapse to a `3×` counter so a
-  crash-looping mod cannot erase your history. *The command input is designed
-  and not built:* nothing implements RCON yet, so the screen explains its
-  absence rather than offering a box that drops what you type.
+- **Console with RCON** — classified log lines over a 16k-line ring,
+  filterable by class or by text, with a day separator so crossing midnight is
+  visible. Repeated lines collapse to a `3×` counter so a crash-looping mod
+  cannot erase your history. <kbd>i</kbd> sends a command to games that have a
+  channel, and the reply lands in the console where it would have appeared
+  anyway; a game without one explains that rather than offering a box that
+  drops what you type.
 - **Player tracking** — who is on now, seven days of sessions, and occupancy by
   hour so you can pick a restart window that bothers nobody.
 - **Mods** — the configured load order, numbered only for games where order
-  means something. *Reordering, update checks and conflict detection are not
-  built:* the plugin interface is designed around mods a server downloads from
-  its own config, and the only game implemented has none.
+  means something, and written into the config for games whose server
+  downloads its own mods. *Reordering, update checks and conflict detection
+  are not built.*
 - **A real task engine** — restarts, updates, backups and restores are durable
   step sequences with declared rollback, and a cron scheduler with two policies
   for what a due job does when people are playing. A restore archives the world
-  it is about to replace and unwinds to it if anything fails. *Drain is not
-  built:* warning players before a shutdown needs a channel to warn them on,
-  and the only game implemented has none.
+  it is about to replace and unwinds to it if anything fails. A scheduled
+  restart drains: players are warned at 15, 5 and 1 minutes, the world is
+  saved, and only then does the server stop — and a game with no channel to
+  warn on degrades to a restart that says so rather than waiting for nothing.
 - **Schema-driven settings** — a form generated from the game plugin's own
   field list, with impact badges (live / restart / recreate / wipe risk) and a
   confirmation for anything that costs more than a file write, and a literal
@@ -245,25 +247,34 @@ rather than typed here — it cannot drift.
 
 ## Supported games
 
-**Valheim is the only plugin so far.** The other two are what the interfaces
-were designed against, and the point of the table is the ragged right-hand
-side: these games agree on almost nothing, and the UI does not care.
+**Valheim and Project Zomboid are built.** The point of the table is the
+ragged right-hand side: these games agree on almost nothing, and the UI does
+not care.
 
 | | Valheim | Zomboid | Palworld |
 | --- | :-: | :-: | :-: |
-| | **built** | *planned* | *planned* |
+| | **built** | **built** | *planned* |
 | Steam app id | `896660` | `380870` | `2394010` |
 | Player list | log-derived | RCON | REST API |
 | Console | — | RCON | RCON |
 | Graceful drain | — | ✅ | ✅ |
-| Mods | Thunderstore | Workshop | — |
+| Mods | — | Workshop | — |
 | Config files written | 0 (env) | 2 | 1 |
+| Settings in the form | 4 | 413 | — |
 
 Valheim was deliberately first because of that first column of dashes. It has
 no RCON, so player state had to be reconstructed from log lines rather than
 asked for; it writes no config files, so `Compile` had to handle returning
 none from day one. A design built against a game that could answer everything
 would have quietly assumed it could.
+
+Zomboid was second because it is the opposite in every cell, and it is what
+turned the interfaces from plausible into tested. It writes 413 settings
+across two files in two syntaxes, its player events never reach stdout so its
+roster has to be asked for over RCON, and its container image rewrites
+thirteen config keys from environment variables on every boot — which is how
+we learned that `Plan` and `Compile` cannot always be independent. See
+[ADR 0011](docs/decisions/0011-compile-writes-whole-files.md).
 
 The dashes are also load-bearing in the UI. A game implementing none of the
 optional capabilities still gets a dashboard, console, settings, tasks and
@@ -354,19 +365,20 @@ fake encodes match the thing it stands in for.
 | **M0** ✅ | Driver and fleet list | `host.Driver` over the named pipe, the store, start/stop. Named pipe verified against Docker Desktop; the render loop still wants an hour on Windows hardware. |
 | **M1** ✅ | Live truth | Stats and log streaming, the dashboard with sparklines, Valheim behind the `Game` interface. |
 | **M2** ✅ | Task engine | Lanes, steps, compensation, SQLite persistence, the Tasks view. Restart, backup, update, restore and the scheduler, plus the Console and Backups screens over them. |
-| **M3** ◐ | Second game | Built: the settings form and apply, with Valheim's world modifiers read out of the game's own assembly. Outstanding: Zomboid — two config syntaxes, RCON, Workshop mods with load order — which is the real test of whether `Schema` and `Compile` were right. |
-| **M4** ◐ | Players and mods | Built: the Players view — live roster, seven days of sessions, occupancy by hour. Mods lists what is configured; managing it needs a game whose mods are declared in config. Palworld not started. |
+| **M3** ✅ | Second game | The settings form and apply, with Valheim's world modifiers read out of the game's own assembly. Project Zomboid: 413 settings across two config syntaxes, RCON, and Workshop mods with load order — plus the transport and the four capabilities it needed. |
+| **M4** ◐ | Players and mods | Built: the Players view — live roster, seven days of sessions, occupancy by hour — over a roster that is asked for where a game can answer and inferred where it cannot. Mods lists and writes the configured load order. Palworld not started. |
 | **M5** ✅ | Provisioning and polish | The wizard with port scanning, restore, delete, ambient mode, the palette, the `/` filter, the `:` command line, CLI subcommands, the `?` help overlay, the apply diff and 80-column layouts. |
 
-**Everything that does not need a second game is built.** M3 and M4 are marked
-◐ for one reason only: the screens and the plumbing landed, and Zomboid and
-Palworld — the plugins that would exercise the capabilities those screens
-degrade around — have not.
+**M4 is the only milestone still open, and Palworld is what is left in it.**
+Everything the second game unblocked has landed: the console sends commands,
+scheduled restarts drain, and a roster is asked for rather than guessed at
+where the game can answer.
 
-That is also most of what is left overall. Three of the debts in
-[`CLAUDE.md`](CLAUDE.md) — the console's command input, drain, and the
-roster's name pairing — are one missing capability rather than three separate
-jobs: a game with a channel to talk to its server on.
+The remaining debts in [`CLAUDE.md`](CLAUDE.md) are narrower than they were.
+Valheim still mis-pairs two players who load out of order, because its log
+never links a name to a connection — that is a fact about Valheim rather than
+a gap in Garrison, and the capability that routes around it now has a working
+implementation to point at.
 
 ## Contributing
 

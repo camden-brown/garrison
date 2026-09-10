@@ -109,6 +109,21 @@ func Action(op core.Op, server string) tea.Cmd {
 	return func() tea.Msg { return ActionMsg{Op: op, Server: server} }
 }
 
+// CommandMsg is the console sending a command to a server.
+//
+// A message rather than a call for the same reason every other action is one:
+// the view stays a pure function of a snapshot, and what comes back arrives as
+// console output rather than as a return value the view would have to hold.
+type CommandMsg struct {
+	Server string
+	Text   string
+}
+
+// Command returns a tea.Cmd that sends one console command.
+func Command(server, text string) tea.Cmd {
+	return func() tea.Msg { return CommandMsg{Server: server, Text: text} }
+}
+
 // Restore returns a tea.Cmd that replaces a server's world with an archive.
 //
 // The archive travels with the message because the store has no notion of a

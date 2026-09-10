@@ -2,6 +2,7 @@ package players_test
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -262,5 +263,139 @@ func TestTrackerWithNothingWiredReturns(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("a tracker with nothing wired did not return")
+	}
+}
+
+// ---- the roster poller --------------------------------------------------
+
+type stubAsker struct {
+	mu      sync.Mutex
+	players []model.Player
+	ok      bool
+	err     error
+	asked   []string
+}
+
+func (s *stubAsker) Ask(_ context.Context, server string) ([]model.Player, bool, error) {
+	s.mu.Lock()
+	s.asked = append(s.asked, server)
+	s.mu.Unlock()
+	return s.players, s.ok, s.err
+}
+
+type stubNames struct{ names []string }
+
+func (s stubNames) Names() []string { return s.names }
+
+type rosterCollector struct {
+	mu   sync.Mutex
+	last map[string][]model.Player
+	got  chan struct{}
+}
+
+func newRosterCollector() *rosterCollector {
+	return &rosterCollector{last: map[string][]model.Player{}, got: make(chan struct{}, 32)}
+}
+
+func (r *rosterCollector) RosterObserved(_ context.Context, _ time.Time, server string, ps []model.Player) {
+	r.mu.Lock()
+	r.last[server] = ps
+	r.mu.Unlock()
+	select {
+	case r.got <- struct{}{}:
+	default:
+	}
+}
+
+func (r *rosterCollector) wait(t *testing.T) {
+	t.Helper()
+	select {
+	case <-r.got:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the roster poller never reported")
+	}
+}
+
+// A game that can be asked is asked, which is the half Valheim cannot do.
+func TestRosterPollerAsksAndReports(t *testing.T) {
+	asker := &stubAsker{ok: true, players: []model.Player{{Name: "Huldra"}}}
+	c := newRosterCollector()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go (&players.RosterPoller{
+		Interval: time.Hour, Servers: stubNames{names: []string{"zomboid-main"}}, Asker: asker,
+	}).Run(ctx, c)
+	c.wait(t)
+	cancel()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.last["zomboid-main"]) != 1 {
+		t.Errorf("reported %v, want one player", c.last["zomboid-main"])
+	}
+}
+
+// A game with no roster capability keeps whatever its log stream made of the
+// roster. Reporting an empty one would erase it.
+func TestRosterPollerLeavesUnaskableServersAlone(t *testing.T) {
+	asker := &stubAsker{ok: false}
+	c := newRosterCollector()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go (&players.RosterPoller{
+		Interval: 10 * time.Millisecond,
+		Servers:  stubNames{names: []string{"valheim-main"}},
+		Asker:    asker,
+	}).Run(ctx, c)
+
+	time.Sleep(80 * time.Millisecond)
+	cancel()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, reported := c.last["valheim-main"]; reported {
+		t.Error("a server that cannot be asked had its roster overwritten")
+	}
+	asker.mu.Lock()
+	asked := len(asker.asked)
+	asker.mu.Unlock()
+	if asked == 0 {
+		t.Error("the poller never tried")
+	}
+}
+
+// An RCON timeout during a save is not everybody leaving, and reporting it as
+// one would end every session in the history.
+func TestRosterPollerKeepsTheLastRosterOnAFailure(t *testing.T) {
+	asker := &stubAsker{ok: true, err: errors.New("i/o timeout")}
+	c := newRosterCollector()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go (&players.RosterPoller{
+		Interval: 10 * time.Millisecond,
+		Servers:  stubNames{names: []string{"zomboid-main"}},
+		Asker:    asker,
+	}).Run(ctx, c)
+
+	time.Sleep(80 * time.Millisecond)
+	cancel()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, reported := c.last["zomboid-main"]; reported {
+		t.Error("a failed poll reported an empty roster")
+	}
+}
+
+func TestRosterPollerWithNothingWiredReturns(t *testing.T) {
+	done := make(chan struct{})
+	go func() {
+		(&players.RosterPoller{}).Run(context.Background(), nil)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("a poller with nothing wired did not return")
 	}
 }

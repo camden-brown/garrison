@@ -30,6 +30,8 @@ import (
 	"github.com/camden-brown/garrison/internal/host/docker"
 	"github.com/camden-brown/garrison/internal/model"
 	"github.com/camden-brown/garrison/internal/services/backup"
+	"github.com/camden-brown/garrison/internal/services/command"
+	"github.com/camden-brown/garrison/internal/services/conn"
 	"github.com/camden-brown/garrison/internal/services/fleet"
 	"github.com/camden-brown/garrison/internal/services/logs"
 	"github.com/camden-brown/garrison/internal/services/metrics"
@@ -140,7 +142,12 @@ func setup(ctx context.Context, confDir, endpoint string, interval time.Duration
 		KeepBackups:  defaultKeepBackups,
 	})
 	arch.store = store
-	engine := tasks.New(driver, resolver{store: store}, store, journal)
+	pool := &conn.Pool{Driver: driver}
+	res := resolver{store: store, pool: pool}
+	commands := command.New(boundCommand{res: res})
+	store.AttachCommander(commands)
+
+	engine := tasks.New(driver, res, store, journal)
 	store.AttachTasks(engine)
 
 	// The two streamers follow containers; the poller tells everyone what
@@ -197,6 +204,24 @@ func setup(ctx context.Context, confDir, endpoint string, interval time.Duration
 	// scale of minutes rather than seconds.
 	run(func() {
 		(&backup.Poller{Interval: backup.DefaultInterval, Dirs: arch}).Run(ctx, store)
+	})
+
+	// Console commands and the roster both talk over RCON, so both go
+	// through the connection pool and both stop when the context does. The
+	// pool is closed last so a command in flight is not cut off mid-reply.
+	run(func() {
+		commands.Run(ctx, store)
+	})
+	run(func() {
+		(&players.RosterPoller{
+			Interval: players.DefaultRosterInterval,
+			Servers:  fleetNames{store: store},
+			Asker:    boundRoster{res: res},
+		}).Run(ctx, store)
+	})
+	run(func() {
+		<-ctx.Done()
+		_ = pool.Close()
 	})
 
 	// Session history needs somewhere durable, so it runs only when the
@@ -395,8 +420,8 @@ type schedule struct {
 func (s schedule) Players(server string) (int, bool) { return s.store.Players(server) }
 func (s schedule) Schedules() []scheduler.Job        { return s.jobs }
 
-func (s schedule) Submit(ctx context.Context, server string, kind tasks.Kind, trigger tasks.Trigger) {
-	s.store.SubmitScheduled(ctx, server, kind, trigger)
+func (s schedule) Submit(ctx context.Context, server string, kind tasks.Kind, trigger tasks.Trigger, drain time.Duration) {
+	s.store.SubmitScheduled(ctx, server, kind, trigger, drain)
 }
 
 func (s schedule) Notify(ctx context.Context, server, text string) {
@@ -406,7 +431,129 @@ func (s schedule) Notify(ctx context.Context, server, text string) {
 // resolver tells the task engine what a server is. It reads the store rather
 // than the config directory so a task acts on the same picture the screen is
 // showing, including settings applied a moment ago.
-type resolver struct{ store *core.Store }
+type resolver struct {
+	store *core.Store
+	pool  *conn.Pool
+}
+
+// Drainer binds a game's drain capability to a live transport.
+//
+// This adaptation is why the method is here rather than in internal/tasks:
+// tasks must not import internal/games, because internal/store depends on
+// tasks and the dependency rule forbids anything under store from reaching
+// games. cmd is the one place allowed to know both (ADR 0007), so cmd is
+// where a games.Drainable becomes a tasks.Drainer.
+//
+// Nil for a stopped container, a game with no channel, or a server whose RCON
+// is not configured — none of which is an error. A drain that cannot warn
+// degrades to a restart that does not, and says so in the task's history.
+func (r resolver) Drainer(server string) tasks.Drainer {
+	c, g := r.transport(server)
+	if c == nil {
+		return nil
+	}
+	drainable, ok := g.(games.Drainable)
+	if !ok {
+		return nil
+	}
+	return boundDrain{conn: c, game: drainable}
+}
+
+// transport is the shared half of Drainer and the command runner: a live
+// connection for a server, or nil.
+func (r resolver) transport(server string) (*conn.Conn, games.Game) {
+	if r.pool == nil || r.store == nil {
+		return nil, nil
+	}
+	srv, ok := r.store.Snapshot().Server(server)
+	if !ok || srv.ID == "" {
+		return nil, nil
+	}
+
+	g, err := games.Get(srv.Game)
+	if err != nil {
+		return nil, nil
+	}
+	plan, err := g.Plan(srv.Instance)
+	if err != nil || !plan.HasRCON() {
+		return nil, nil
+	}
+
+	return r.pool.Get(host.Container{
+		ID: srv.ID, Instance: srv.Name, Game: srv.Game, Ports: srv.Ports,
+	}, plan), g
+}
+
+// boundCommand adapts a games.Commandable for internal/services/command, and
+// boundRoster a games.Rostered for the roster poller. Both exist for the
+// reason boundDrain does: those packages must not import internal/games, and
+// cmd is the one place allowed to know both sides.
+type boundCommand struct{ res resolver }
+
+func (b boundCommand) Run(ctx context.Context, server, cmd string) (string, bool, error) {
+	c, g := b.res.transport(server)
+	if c == nil {
+		return "", false, nil
+	}
+	commandable, ok := g.(games.Commandable)
+	if !ok {
+		return "", false, nil
+	}
+
+	ctx, cancel := conn.WithTimeout(ctx)
+	defer cancel()
+
+	out, err := commandable.Command(ctx, c, cmd)
+	return out, true, err
+}
+
+type boundRoster struct{ res resolver }
+
+func (b boundRoster) Ask(ctx context.Context, server string) ([]model.Player, bool, error) {
+	c, g := b.res.transport(server)
+	if c == nil {
+		return nil, false, nil
+	}
+	rostered, ok := g.(games.Rostered)
+	if !ok {
+		return nil, false, nil
+	}
+
+	ctx, cancel := conn.WithTimeout(ctx)
+	defer cancel()
+
+	out, err := rostered.Roster(ctx, c)
+	return out, true, err
+}
+
+// fleetNames is the set the roster poller walks.
+type fleetNames struct{ store *core.Store }
+
+func (f fleetNames) Names() []string {
+	if f.store == nil {
+		return nil
+	}
+	snap := f.store.Snapshot()
+	out := make([]string, 0, len(snap.Servers))
+	for _, srv := range snap.Servers {
+		out = append(out, srv.Name)
+	}
+	return out
+}
+
+// boundDrain is a games.Drainable with its transport attached.
+type boundDrain struct {
+	conn *conn.Conn
+	game games.Drainable
+}
+
+func (b boundDrain) Warn(ctx context.Context, in time.Duration) error {
+	return b.game.Warn(ctx, b.conn, in)
+}
+
+func (b boundDrain) Save(ctx context.Context) error {
+	return b.game.Save(ctx, b.conn)
+}
 
 func (r resolver) Instance(server string) (model.Instance, tasks.Game, error) {
 	srv, ok := r.store.Snapshot().Server(server)

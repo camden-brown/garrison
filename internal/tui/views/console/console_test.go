@@ -74,6 +74,8 @@ func press(v tui.View, snap core.Snapshot, keys ...string) tui.View {
 			msg = tea.KeyMsg{Type: tea.KeyPgUp}
 		case "pgdown":
 			msg = tea.KeyMsg{Type: tea.KeyPgDown}
+		case "enter":
+			msg = tea.KeyMsg{Type: tea.KeyEnter}
 		case "esc":
 			msg = tea.KeyMsg{Type: tea.KeyEsc}
 		default:
@@ -393,5 +395,164 @@ func TestTextFilterWithNoMatchesExplainsItself(t *testing.T) {
 
 	if got := v.Render(frame(), snap); !strings.Contains(got, "Nothing matching") {
 		t.Errorf("an empty filter result does not explain itself:\n%s", got)
+	}
+}
+
+// zomboidSnapshot is a server whose game has a command channel. Valheim does
+// not, which is what the other tests here rely on.
+func zomboidSnapshot(events ...model.Event) core.Snapshot {
+	inst := model.Instance{Name: "zomboid-main", Game: "zomboid"}
+	s := core.Reduce(core.Snapshot{Engine: core.Engine{OK: true}},
+		core.InstancesLoaded{At: now, Instances: []model.Instance{inst}},
+		core.FleetObserved{At: now, Containers: []host.Container{
+			{Instance: "zomboid-main", Game: "zomboid", State: model.StateRunning},
+		}},
+	)
+	if len(events) == 0 {
+		return s
+	}
+	return core.Reduce(s, core.LogEventsRead{At: now, Server: "zomboid-main", Events: events})
+}
+
+func zomboidFrame() tui.Frame {
+	f := frame()
+	f.Server = "zomboid-main"
+	return f
+}
+
+func pressIn(v tui.View, f tui.Frame, snap core.Snapshot, keys ...string) (tui.View, []tea.Msg) {
+	var msgs []tea.Msg
+	for _, k := range keys {
+		var msg tea.KeyMsg
+		switch k {
+		case "enter":
+			msg = tea.KeyMsg{Type: tea.KeyEnter}
+		case "esc":
+			msg = tea.KeyMsg{Type: tea.KeyEsc}
+		case "space":
+			msg = tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}}
+		default:
+			msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
+		}
+		next, cmd := v.Update(msg, f, snap)
+		v = next
+		if cmd != nil {
+			msgs = append(msgs, cmd())
+		}
+	}
+	return v, msgs
+}
+
+// The debt this closes: the console can finally send something. The view
+// learns nothing about which games have RCON — only whether the one in front
+// of it does.
+func TestTheCommandInputSends(t *testing.T) {
+	snap := zomboidSnapshot(ev(model.KindInfo, "up"))
+
+	v, _ := pressIn(console.New(), zomboidFrame(), snap, "i")
+	if got := v.Render(zomboidFrame(), snap); !strings.Contains(got, ">") {
+		t.Fatalf("no input opened:\n%s", got)
+	}
+
+	v, _ = pressIn(v, zomboidFrame(), snap, "p", "l", "a", "y", "e", "r", "s")
+	_, msgs := pressIn(v, zomboidFrame(), snap, "enter")
+
+	var sent *tui.CommandMsg
+	for _, m := range msgs {
+		if c, ok := m.(tui.CommandMsg); ok {
+			sent = &c
+		}
+	}
+	if sent == nil {
+		t.Fatal("enter sent nothing")
+	}
+	if sent.Server != "zomboid-main" || sent.Text != "players" {
+		t.Errorf("sent %+v, want players to zomboid-main", *sent)
+	}
+}
+
+// A game with no channel keeps "i" free rather than opening a box that cannot
+// do anything.
+func TestNoInputForAGameWithoutAChannel(t *testing.T) {
+	snap := snapshot(ev(model.KindInfo, "up")) // valheim
+
+	v := press(console.New(), snap, "i")
+	got := v.Render(frame(), snap)
+
+	if !strings.Contains(got, "no command channel") {
+		t.Errorf("the refusal is gone:\n%s", got)
+	}
+	if strings.Contains(got, "i to send") {
+		t.Errorf("a game with no channel offered the input:\n%s", got)
+	}
+}
+
+// Composing swallows every key, or typing "gg" jumps to the oldest line
+// halfway through a command.
+func TestComposingSwallowsTheViewsKeys(t *testing.T) {
+	var events []model.Event
+	for i := 0; i < 200; i++ {
+		events = append(events, ev(model.KindInfo, "line "+strconv.Itoa(i)))
+	}
+	snap := zomboidSnapshot(events...)
+
+	v, _ := pressIn(console.New(), zomboidFrame(), snap, "i")
+	v, _ = pressIn(v, zomboidFrame(), snap, "g", "g", "f")
+
+	got := v.Render(zomboidFrame(), snap)
+	if !strings.Contains(got, "line 199") {
+		t.Errorf("typing g jumped the console:\n%s", got)
+	}
+	if strings.Contains(got, "filter: chat") {
+		t.Errorf("typing f cycled the class filter:\n%s", got)
+	}
+}
+
+func TestEscapeAbandonsTheCommand(t *testing.T) {
+	snap := zomboidSnapshot(ev(model.KindInfo, "up"))
+
+	v, _ := pressIn(console.New(), zomboidFrame(), snap, "i")
+	v, _ = pressIn(v, zomboidFrame(), snap, "s", "a", "v", "e")
+	v, msgs := pressIn(v, zomboidFrame(), snap, "esc")
+
+	for _, m := range msgs {
+		if _, ok := m.(tui.CommandMsg); ok {
+			t.Fatal("esc sent the command")
+		}
+	}
+	if got := v.Render(zomboidFrame(), snap); strings.Contains(got, "save") {
+		t.Errorf("esc left the text in the field:\n%s", got)
+	}
+}
+
+func TestAnEmptyCommandIsNotSent(t *testing.T) {
+	snap := zomboidSnapshot(ev(model.KindInfo, "up"))
+
+	v, _ := pressIn(console.New(), zomboidFrame(), snap, "i")
+	_, msgs := pressIn(v, zomboidFrame(), snap, "enter")
+
+	for _, m := range msgs {
+		if _, ok := m.(tui.CommandMsg); ok {
+			t.Error("an empty command was sent")
+		}
+	}
+}
+
+// Sending follows again, because the reply is about to arrive at the bottom
+// and a console parked in scrollback would not show the answer.
+func TestSendingReturnsToFollowing(t *testing.T) {
+	var events []model.Event
+	for i := 0; i < 200; i++ {
+		events = append(events, ev(model.KindInfo, "line "+strconv.Itoa(i)))
+	}
+	snap := zomboidSnapshot(events...)
+
+	v, _ := pressIn(console.New(), zomboidFrame(), snap, "pgup")
+	v, _ = pressIn(v, zomboidFrame(), snap, "i")
+	v, _ = pressIn(v, zomboidFrame(), snap, "s", "a", "v", "e")
+	v, _ = pressIn(v, zomboidFrame(), snap, "enter")
+
+	if got := v.Render(zomboidFrame(), snap); !strings.Contains(got, "line 199") {
+		t.Errorf("the console stayed in scrollback after sending:\n%s", got)
 	}
 }

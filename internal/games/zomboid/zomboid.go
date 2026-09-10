@@ -134,5 +134,13 @@ func (Game) Plan(inst model.Instance) (model.Plan, error) {
 		// halfway is the failure this grace exists to avoid.
 		StopSignal: "SIGTERM",
 		StopGrace:  120 * time.Second,
+
+		// Where the command channel is. Declared rather than assumed, so
+		// nothing above internal/games has to know that Zomboid speaks RCON
+		// on 27015 and keeps its password in RCONPassword.
+		RCON: model.RCONSpec{
+			ContainerPort: "27015/tcp",
+			Password:      rconPassword(inst),
+		},
 	}, nil
 }

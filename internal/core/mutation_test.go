@@ -877,3 +877,74 @@ func TestBackupsListedReplaces(t *testing.T) {
 		t.Errorf("backups = %v, want only the one still on disk", srv.Backups)
 	}
 }
+
+// A roster that was asked for replaces the one that was inferred. That is
+// what the answer means: a game that can be asked has told us the whole set.
+func TestRosterObservedReplacesTheRoster(t *testing.T) {
+	s := apply(withServer("a"), logs("a",
+		model.Event{Kind: model.KindJoin, At: at, Player: "Inferred", SteamID: "1"},
+	))
+	if srv, _ := s.Server("a"); len(srv.Players) != 1 {
+		t.Fatalf("the log-derived roster did not land: %v", srv.Players)
+	}
+
+	s = apply(s, RosterObserved{At: at, Server: "a", Players: []model.Player{
+		{Name: "Asked"}, {Name: "AlsoAsked"},
+	}})
+
+	srv, _ := s.Server("a")
+	if len(srv.Players) != 2 {
+		t.Fatalf("got %v, want the asked-for roster", srv.Players)
+	}
+	for _, p := range srv.Players {
+		if p.Name == "Inferred" {
+			t.Error("the inferred roster survived an authoritative answer")
+		}
+	}
+}
+
+// The answer says who is connected, not since when. Taking the poll's clock
+// would restart every session on every poll, and the occupancy chart is
+// computed from those times.
+func TestRosterObservedKeepsArrivalTimes(t *testing.T) {
+	joined := at.Add(-2 * time.Hour)
+	s := apply(withServer("a"), logs("a",
+		model.Event{Kind: model.KindJoin, At: joined, Player: "Huldra"},
+	))
+
+	s = apply(s, RosterObserved{At: at, Server: "a", Players: []model.Player{{Name: "Huldra"}}})
+
+	srv, _ := s.Server("a")
+	if len(srv.Players) != 1 {
+		t.Fatalf("got %v", srv.Players)
+	}
+	if !srv.Players[0].Since.Equal(joined) {
+		t.Errorf("Since = %v, want the original %v — the session clock restarted", srv.Players[0].Since, joined)
+	}
+}
+
+// Somebody the roster has never mentioned before gets the time we heard about
+// them, since there is nothing better to use.
+func TestRosterObservedDatesNewArrivals(t *testing.T) {
+	s := apply(withServer("a"), RosterObserved{
+		At: at, Server: "a", Players: []model.Player{{Name: "Fresh"}},
+	})
+
+	srv, _ := s.Server("a")
+	if len(srv.Players) != 1 || srv.Players[0].Since.IsZero() {
+		t.Errorf("a new arrival has no arrival time: %+v", srv.Players)
+	}
+}
+
+// An empty answer is everybody having left, which is different from a failed
+// poll — the poller does not report those at all.
+func TestRosterObservedCanEmptyTheRoster(t *testing.T) {
+	s := apply(withServer("a"), logs("a",
+		model.Event{Kind: model.KindJoin, At: at, Player: "Huldra"},
+	))
+	s = apply(s, RosterObserved{At: at, Server: "a"})
+
+	if srv, _ := s.Server("a"); len(srv.Players) != 0 {
+		t.Errorf("got %v, want nobody", srv.Players)
+	}
+}

@@ -80,6 +80,18 @@ type View struct {
 	// text is the "/" filter, which narrows by content where filter narrows
 	// by classification. Both are the view's to own.
 	text comp.Filter
+
+	// composing is the command line at the bottom having the keyboard, with
+	// typed and caret the command being entered.
+	//
+	// View state, like the Backups confirmation: an abandoned half-typed
+	// command is not worth carrying across a resize, and unlike a settings
+	// draft nothing else in the program has any use for it. What was sent
+	// is not held here at all — it comes back as console output, which is
+	// where it would have appeared if the server had said it unprompted.
+	composing bool
+	typed     string
+	caret     int
 }
 
 func New() *View { return &View{} }
@@ -96,19 +108,23 @@ func (v *View) Available(inst model.Instance) (bool, string) {
 }
 
 var (
-	keyUp     = key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "back"))
-	keyDown   = key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "forward"))
-	keyPageUp = key.NewBinding(key.WithKeys("pgup", "ctrl+b"), key.WithHelp("pgup", "page back"))
-	keyPageDn = key.NewBinding(key.WithKeys("pgdown", "ctrl+f"), key.WithHelp("pgdn", "page forward"))
-	keyTop    = key.NewBinding(key.WithKeys("g", "home"), key.WithHelp("g", "oldest"))
-	keyBottom = key.NewBinding(key.WithKeys("G", "end"), key.WithHelp("G", "newest"))
-	keyFreeze = key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "freeze"))
-	keyFilter = key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "class filter"))
-	keySearch = key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter text"))
+	keyUp      = key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "back"))
+	keyDown    = key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "forward"))
+	keyPageUp  = key.NewBinding(key.WithKeys("pgup", "ctrl+b"), key.WithHelp("pgup", "page back"))
+	keyPageDn  = key.NewBinding(key.WithKeys("pgdown", "ctrl+f"), key.WithHelp("pgdn", "page forward"))
+	keyTop     = key.NewBinding(key.WithKeys("g", "home"), key.WithHelp("g", "oldest"))
+	keyBottom  = key.NewBinding(key.WithKeys("G", "end"), key.WithHelp("G", "newest"))
+	keyFreeze  = key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "freeze"))
+	keyFilter  = key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "class filter"))
+	keySearch  = key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter text"))
+	keyCompose = key.NewBinding(key.WithKeys("i", "enter"), key.WithHelp("i", "command"))
+	keySend    = key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "send"))
+	keyAbandon = key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel"))
 )
 
 func (v *View) Keys() []key.Binding {
-	return []key.Binding{keyUp, keyDown, keyPageUp, keyPageDn, keyTop, keyBottom, keyFreeze, keyFilter, keySearch}
+	return []key.Binding{keyUp, keyDown, keyPageUp, keyPageDn, keyTop, keyBottom,
+		keyFreeze, keyFilter, keySearch, keyCompose}
 }
 
 func (v *View) Update(msg tea.Msg, f tui.Frame, snap core.Snapshot) (tui.View, tea.Cmd) {
@@ -124,6 +140,32 @@ func (v *View) Update(msg tea.Msg, f tui.Frame, snap core.Snapshot) (tui.View, t
 
 	next := *v
 
+	// Composing swallows every key, or typing "gg" jumps to the oldest line
+	// halfway through a command. Checked before the filter because both
+	// take text and only one can have the keyboard.
+	if next.composing {
+		switch {
+		case key.Matches(msgKey, keyAbandon):
+			next.stopComposing()
+			return &next, nil
+		case key.Matches(msgKey, keySend):
+			text := strings.TrimSpace(next.typed)
+			next.stopComposing()
+			if text == "" {
+				return &next, nil
+			}
+			// Following again on send, because the reply is about to arrive
+			// at the bottom and a console parked in scrollback would not
+			// show the answer to the thing you just asked.
+			next.scroll, next.frozen, next.frozenAt = 0, false, 0
+			return &next, tui.Command(srv.Name, text)
+		}
+		if typed, caret, handled := comp.EditKey(next.typed, next.caret, msgKey); handled {
+			next.typed, next.caret = typed, caret
+		}
+		return &next, nil
+	}
+
 	// The filter bar swallows every key while it is open, or typing "f"
 	// into a search cycles the class filter underneath it.
 	if text, handled := next.text.Key(msgKey); handled {
@@ -133,6 +175,15 @@ func (v *View) Update(msg tea.Msg, f tui.Frame, snap core.Snapshot) (tui.View, t
 	}
 	if msgKey.String() == "/" {
 		next.text = next.text.Open()
+		return &next, nil
+	}
+
+	// Only offer to compose where there is somewhere to send it. A game with
+	// no command channel keeps "i" free rather than opening a box that
+	// cannot do anything.
+	if key.Matches(msgKey, keyCompose) && commandable(srv) {
+		next.composing = true
+		next.typed, next.caret = "", 0
 		return &next, nil
 	}
 
@@ -166,6 +217,25 @@ func (v *View) Update(msg tea.Msg, f tui.Frame, snap core.Snapshot) (tui.View, t
 		next.scroll = 0
 	}
 	return &next, nil
+}
+
+func (v *View) stopComposing() {
+	v.composing = false
+	v.typed = ""
+	v.caret = 0
+}
+
+// commandable reports whether this server's game has a command channel.
+//
+// The assertion is the whole of what this view knows about any game: it never
+// learns which games have RCON, only whether the one in front of it does.
+func commandable(srv core.Server) bool {
+	g, err := games.Get(srv.Game)
+	if err != nil {
+		return false
+	}
+	_, ok := g.(games.Commandable)
+	return ok
 }
 
 // scrollBy moves the window, clamped so it cannot run off either end.
@@ -345,5 +415,17 @@ func (v *View) commandLine(f tui.Frame, srv core.Server) string {
 	if _, ok := g.(games.Commandable); !ok {
 		return t.Dim.Render("> " + g.Meta().Name + " has no command channel — nothing to send commands over.")
 	}
-	return t.Dim.Render("> command input arrives with the RCON transport.")
+
+	if !v.composing {
+		return t.Dim.Render(comp.Truncate("> i to send a command to "+srv.Name, f.Width))
+	}
+
+	label := "> "
+	field := f.Width - comp.Width(label)
+	if field < 1 {
+		return ""
+	}
+	return t.Accent.Render(label) + comp.Input{
+		Value: v.typed, Cursor: v.caret, Width: field, Theme: t,
+	}.Render()
 }

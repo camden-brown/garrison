@@ -763,3 +763,45 @@ func (s Snapshot) forget(name string) Snapshot {
 	}
 	return s.withServers(servers)
 }
+
+// RosterObserved is a server answering who is connected.
+//
+// It replaces the roster rather than merging into it, because that is what the
+// answer means: a game that can be asked has told us the whole set, and a
+// player missing from it has left. The log-derived roster for games that
+// cannot be asked is built by rosterApply instead, and the two never run
+// against the same server.
+type RosterObserved struct {
+	At      time.Time
+	Server  string
+	Players []model.Player
+}
+
+func (m RosterObserved) apply(s Snapshot) Snapshot {
+	s.At = m.At
+	return s.withServers(mapServer(s.Servers, m.Server, func(srv *Server) {
+		players := make([]model.Player, len(m.Players))
+		copy(players, m.Players)
+
+		// Keep the arrival time we already had for anyone still on. The
+		// answer says who is connected, not since when, and taking the
+		// poll's own clock would restart every session on every poll.
+		for i, p := range players {
+			for _, known := range srv.Players {
+				if known.Name == p.Name && !known.Since.IsZero() {
+					players[i].Since = known.Since
+					break
+				}
+			}
+			if players[i].Since.IsZero() {
+				players[i].Since = m.At
+			}
+		}
+
+		srv.Players = players
+		// A roster that was asked for supersedes anything inferred, so the
+		// half-identified connections the log-derived path tracks are no
+		// longer meaningful for this server.
+		srv.connecting = nil
+	}))
+}

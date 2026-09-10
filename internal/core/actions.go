@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/camden-brown/garrison/internal/model"
 	"github.com/camden-brown/garrison/internal/tasks"
@@ -103,6 +104,28 @@ func (s *Store) Backup(ctx context.Context, instance string) {
 	})
 }
 
+// Commander runs console commands. Declared here so the store can hand one
+// off without importing the service that does it (ADR 0007).
+type Commander interface {
+	Send(server, text string) bool
+}
+
+// SendCommand runs a console command against a server.
+//
+// Not a task, and internal/services/command says why at length: a command is
+// a question whose answer belongs in the console, not a durable change with a
+// compensation. The store's part is only to hand it to something that can do
+// I/O and to say when it could not.
+func (s *Store) SendCommand(ctx context.Context, instance, text string) {
+	if s.commander == nil {
+		s.raise(ctx, instance, fmt.Errorf("%s: no command channel is wired", instance))
+		return
+	}
+	if !s.commander.Send(instance, text) {
+		s.raise(ctx, instance, fmt.Errorf("%s: the command queue is full; wait for the server to answer", instance))
+	}
+}
+
 // CreateServer writes a new server's configuration and adds it to the fleet.
 //
 // It does not start anything. Creating the container is what Start already
@@ -196,11 +219,13 @@ func (s *Store) Players(server string) (int, bool) {
 }
 
 // SubmitScheduled queues a task the scheduler decided is due.
-func (s *Store) SubmitScheduled(ctx context.Context, server string, kind tasks.Kind, trigger tasks.Trigger) {
+func (s *Store) SubmitScheduled(ctx context.Context, server string, kind tasks.Kind, trigger tasks.Trigger, drain time.Duration) {
 	switch kind {
 	case tasks.KindRestart:
+		// The drain is the whole reason a scheduled restart is different
+		// from a manual one: nobody minds a bounce they were warned about.
 		s.submit(ctx, server, kind, func(id string) *tasks.Task {
-			return tasks.Restart(id, server, trigger)
+			return tasks.RestartWithDrain(id, server, trigger, drain)
 		})
 	case tasks.KindBackup:
 		if s.archives == nil {

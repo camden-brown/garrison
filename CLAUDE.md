@@ -69,7 +69,23 @@ summary for a scheduled job.
 - `internal/services/conn` — the RCON transport, implementing `games.Conn`.
   Source RCON over TCP, one serialised connection per server, reconnect and
   retry once because the usual failure is a socket the server closed while
-  nothing was using it.
+  nothing was using it. `Pool` keys connections by container so a recreated
+  one gets a fresh socket rather than a port that has moved.
+- `internal/services/command` — console commands. **Not a task, on purpose**:
+  a command is a question, its answer belongs in the console, and a task lane
+  entry beside every chat message would make the Tasks view useless. The
+  reply arrives as a console event, where it would have appeared anyway had
+  the server said it unprompted.
+- `internal/services/players` also polls rosters for games that implement
+  `games.Rostered`, so an asked-for roster replaces an inferred one and both
+  land in the same snapshot field.
+
+**Capabilities reach a plugin pre-bound.** `internal/tasks` and the services
+must not import `internal/games` — `internal/store` depends on tasks and the
+dependency rule forbids anything under store reaching games — so `cmd` asserts
+`games.Drainable`, `Commandable` and `Rostered` and adapts each to a narrow
+interface the consumer declares. The arch test found that, which is exactly
+what it is for.
 - `internal/tasks` — the engine. Lanes are per server and serialised; steps
   declare compensation; the journal is written before every step and an
   interrupted task is failed and named rather than resumed.
@@ -143,13 +159,10 @@ Debts still outstanding, all deliberate and all noted in the code:
 
 1. The roster binds a name to a connection by claiming the oldest unnamed
    one, because Valheim's log never links the two. It mis-pairs two players
-   who finish loading in a different order than they connected. A game that
-   can answer properly implements `games.Rostered` and skips this entirely.
-2. The console has no command *input*. `games.Commandable` and `games.Conn`
-   are both declared and neither has an implementation, so the Console view
-   asserts the capability and explains its absence rather than offering an
-   input that would drop what you typed. The transport arrives with
-   Zomboid's RCON, and lights the input up without the view changing.
+   who finish loading in a different order than they connected. **This is
+   now Valheim's problem alone**: Zomboid implements `games.Rostered` and the
+   roster poller asks it instead, so the inference runs only for games that
+   cannot be asked.
 3. `model.Mount` cannot express a Docker named volume — only a host path. The
    measurement in "Platform facts" says a bind mount from a Windows drive is
    ~32× slower than a volume for small-file writes, so this is now a number
@@ -164,9 +177,11 @@ Debts still outstanding, all deliberate and all noted in the code:
    mechanism — so Valheim implements no `Moddable` and the screen says so.
    Whether the interface needs an install path is a question for the first
    game that actually has one; guessing now is what ADR 0006 warns against.
-6. Drain is not implemented. `Restart` stops and starts; it does not warn
-   players at 15m, 5m and 1m first, because Valheim has no channel to warn
-   them on. It arrives with Zomboid's RCON.
+5. Drain works for games with a channel and degrades for those without.
+   `RestartWithDrain` warns at 15m, 5m and 1m, saves, then stops; a game with
+   no `games.Drainable` skips the wait and says so in the task's history
+   rather than delaying a restart that helps nobody. Valheim is still the
+   game with no way to warn anyone.
 
 Closed since M1: start/stop are tasks, the stop record is durable in SQLite,
 and the cold metric tier has somewhere to live. Closed since M2: the console

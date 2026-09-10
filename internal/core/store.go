@@ -26,6 +26,7 @@ type Store struct {
 	saver        Saver
 	archives     Archives
 	keepBackups  int
+	commander    Commander
 	now          func() time.Time
 	metricLabels map[string]string
 }
@@ -49,6 +50,10 @@ type Options struct {
 	// all, which is a choice somebody should make rather than a default
 	// that quietly fills a disk — the wizard will propose a number.
 	KeepBackups int
+
+	// Commander runs console commands. Nil means the console says it has no
+	// channel rather than swallowing what was typed.
+	Commander Commander
 
 	// Now is the clock, injectable so reducer tests are not timing tests.
 	Now func() time.Time
@@ -79,6 +84,7 @@ func New(opts Options) *Store {
 		saver:        opts.Saver,
 		archives:     opts.Archives,
 		keepBackups:  opts.KeepBackups,
+		commander:    opts.Commander,
 		now:          opts.Now,
 		metricLabels: opts.MetricLabels,
 		snap:         Snapshot{At: opts.Now()},
@@ -223,3 +229,9 @@ func (s *Store) closeSubs() {
 		close(ch)
 	}
 }
+
+// AttachCommander wires the console command runner after construction.
+//
+// Same knot as AttachTasks: the runner needs the resolver, the resolver needs
+// the store, and cmd is where that circle is closed.
+func (s *Store) AttachCommander(c Commander) { s.commander = c }
