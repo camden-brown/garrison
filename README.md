@@ -58,10 +58,14 @@ are written once and work the same for every game.
 - **Player tracking** — who is on now, seven days of sessions, and occupancy by
   hour so you can pick a restart window that bothers nobody.
 - **Mods** — the load order, numbered and reorderable where order means
-  something, written into the config for games whose server downloads its own
-  mods, and update-checked against the Steam Workshop. A mod the Workshop has
-  never heard of is shown as a problem rather than dropped from a list you
-  wrote yourself.
+  something, and update-checked against the source the game actually uses.
+  Both shapes are supported: ids written into config for a server that
+  downloads its own (Zomboid, Steam Workshop), and packages Garrison
+  downloads and unpacks itself for one whose mods are files (Valheim, BepInEx
+  plugins from Thunderstore). A mod the source has never heard of is shown as
+  a problem rather than dropped from a list you wrote yourself. Installing
+  never touches a file Garrison did not install, and an apply that fails puts
+  the previous versions back.
 - **A real task engine** — restarts, updates, backups and restores are durable
   step sequences with declared rollback, and a cron scheduler with two policies
   for what a due job does when people are playing. A restore archives the world
@@ -202,7 +206,7 @@ PVP        = false
 PauseEmpty = true
 
 [[mods]]                   # order in the file is the load order
-id = "2822286426"
+id = "2822286426"          # a Workshop id, or "Owner-Package" on Thunderstore
 pin = "2.11.0"             # omit to track latest
 
 [[schedule]]
@@ -289,9 +293,9 @@ we learned that `Plan` and `Compile` cannot always be independent. See
 The dashes are also load-bearing in the UI. A game implementing none of the
 optional capabilities still gets a dashboard, console, settings, tasks and
 backups — the screens that need a capability it lacks explain themselves in
-that game's own terms instead of showing an empty table. That is why the Mods
-screen currently says Valheim has no mod system Garrison can manage, and the
-Console says it has nothing to send commands over.
+that game's own terms instead of showing an empty table. That is why the Console
+says Valheim has nothing to send commands over, while the same screen takes
+typed commands for Zomboid without either of them appearing in a view.
 
 ## Architecture
 

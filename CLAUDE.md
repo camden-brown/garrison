@@ -39,7 +39,12 @@ summary for a scheduled job.
 - `internal/host/fake` — the fake driver. Everything above `host` is tested
   against it, which is why the suite passes with Docker stopped.
 - `internal/core` — the store. Typed mutations, one writer, immutable
-  snapshots, conflating subscriptions.
+  snapshots, conflating subscriptions. A task that writes a server's
+  configuration is handed `taskSaver()` rather than the bare saver: it wraps
+  the save and, on success only, sends `InstanceAdded` back. Without it the
+  file on disk moves and the snapshot does not, so the settings draft is
+  compared against a stale instance and never stops looking pending — apply,
+  confirm, and the form asks to apply again.
 - `internal/services/fleet` — the poller and the start/stop controller. The
   only place M0 does I/O.
 - `internal/services/streams` — one goroutine per live container, shared by
@@ -52,7 +57,13 @@ summary for a scheduled job.
   line through the game's `Parse`, batched to the store every 100ms so a log
   flood cannot drive the render loop.
 - `internal/games/valheim` — the first plugin. Fixtures in `testdata/` are a
-  captured session from a real server, not documentation.
+  captured session from a real server, not documentation. It implements
+  `Moddable` and `Installable`: its mods are BepInEx plugins from
+  Thunderstore, and `Plan` derives `BEPINEX` from whether any are configured
+  rather than offering a switch that can disagree with the mod list. Note the
+  image reads `SERVER_PASS=${SERVER_PASS-secret}` — the one-dash form — so
+  the plan sets it even when empty, or a server with no password would get
+  the image's.
 - `internal/games/zomboid` — the second, and the one M3 was for. 144 ini keys
   and 269 sandbox variables in `keys_gen.go`, generated from fixtures
   extracted out of a real install; `Compile` writes both files whole and
@@ -80,20 +91,38 @@ summary for a scheduled job.
   `games.Rostered`, so an asked-for roster replaces an inferred one and both
   land in the same snapshot field.
 - `internal/services/mods` — resolves configured mod ids into names, sizes and
-  update badges against the Steam Workshop, hourly. One request for a whole
-  server's list rather than one per mod, and the configured order is
-  preserved: for a game where load order matters, that order is the
-  operator's decision and a resolver sorting it would reorder their server.
+  update badges, hourly. Two sources: the Steam Workshop (one request for a
+  whole server's list) and Thunderstore (one per package, because that API
+  takes no list). The configured order is preserved — for a game where load
+  order matters, that order is the operator's decision and a resolver sorting
+  it would reorder their server.
+
+  It also **installs** mods for the games whose mods are files rather than
+  ids: download, unpack the plugin content, and record what was installed in
+  a `.garrison-mods.json` beside it. That manifest does two jobs — it is the
+  installed half of an update badge, and it is what makes the directory safe
+  to share with a person who drops DLLs in by hand, since pruning removes
+  only what the manifest claims. The install step's compensation moves
+  displaced mods aside rather than copying them, so undoing an apply that
+  installed four mods costs four renames ([ADR 0012](docs/decisions/0012-mods-that-are-files.md)).
 
 **Capabilities reach a plugin pre-bound.** `internal/tasks` and the services
 must not import `internal/games` — `internal/store` depends on tasks and the
 dependency rule forbids anything under store reaching games — so `cmd` asserts
-`games.Drainable`, `Commandable` and `Rostered` and adapts each to a narrow
-interface the consumer declares. The arch test found that, which is exactly
+`games.Drainable`, `Commandable`, `Rostered` and `Installable` and adapts each
+to a narrow interface the consumer declares. The arch test found that, which is exactly
 what it is for.
 - `internal/tasks` — the engine. Lanes are per server and serialised; steps
   declare compensation; the journal is written before every step and an
   interrupted task is failed and named rather than resumed.
+
+  An apply is five steps: write the TOML, compile, **write the compiled files
+  under the instance's data**, install mods, then recreate. The third was
+  missing until 2026-09-11 — `Compile` was called, the count was logged, and
+  nothing ever wrote them, so a Zomboid apply changed the TOML and left the
+  server reading its old `servertest.ini`. It writes atomically (the server
+  may be reading), keeps what was there for the compensation, and refuses for
+  a volume-backed server rather than reporting an apply that wrote nothing.
 - `internal/store` — SQLite. The task journal, the cold metric tier and the
   events worth keeping, with append-only migrations.
 - `internal/config` — one TOML file per server, atomic saves, hand-editable.
@@ -172,7 +201,7 @@ Debts still outstanding, all deliberate and all noted in the code:
    An empty id falls back to the name, which is right per player. A game that
    can answer implements `games.Rostered` and never reaches this; Zomboid
    does.
-3. **A volume-backed server cannot be archived.** `model.Mount` now expresses
+2. **A volume-backed server cannot be archived.** `model.Mount` now expresses
    a Docker named volume and a server chooses with `volume =` in its TOML
    instead of `data =`, which is what the ~32× small-file measurement argued
    for. What is missing is the other half: `internal/services/backup` tars a
@@ -181,15 +210,16 @@ Debts still outstanding, all deliberate and all noted in the code:
    nothing — a backup task that lies is how somebody finds out they have no
    backups on the day they need one. Fixing it means a driver capability that
    runs a helper container to stream a tar out of the volume.
-4. Restore and delete have no *scheduled* form, deliberately. Both are things
+3. Restore and delete have no *scheduled* form, deliberately. Both are things
    a person asked for by typing a server's name; there is no policy that would
    run either unattended and none worth inventing.
-5. Valheim has no mod management, and cannot with this interface. `Moddable`
-   is shaped around mods a server downloads from its own config — Zomboid's
-   Workshop ids, which is why reordering and update checks work there — and
-   Valheim's BepInEx plugins are files somebody drops in a directory. Whether
-   the interface needs an install path is a question for the first game that
-   actually needs one; guessing now is what ADR 0006 warns against.
+4. **Mod dependencies are reported and not resolved.** Thunderstore packages
+   declare what they need and the Mods screen shows it, but installing a mod
+   does not pull its dependencies in — a mod that needs Jotunn and is not
+   listed beside it in the TOML will not find it. Resolving the graph means
+   deciding what to do when two mods want different versions of the same
+   library, and the answer to that is not obvious enough to guess
+   ([ADR 0012](docs/decisions/0012-mods-that-are-files.md)).
 5. Drain works for games with a channel and degrades for those without.
    `RestartWithDrain` warns at 15m, 5m and 1m, saves, then stops; a game with
    no `games.Drainable` skips the wait and says so in the task's history
@@ -204,7 +234,9 @@ have a screen with a restore behind a typed confirmation. Closed since then:
 Players and Mods, the "/" filter, the ":" command line, the ctrl+P palette,
 ambient mode, the provisioner, delete, the server steppers, the generated
 apply diff, and start/stop/restart/backup/update as subcommands that wait for
-their task and exit on its result.
+their task and exit on its result. Closed 2026-09-11: Valheim's mods
+([ADR 0012](docs/decisions/0012-mods-that-are-files.md)) and the apply step
+that writes compiled config files at all.
 
 **M5 is done and M3/M4 are held open by one thing:** a second game. The
 console's command input, drain and the roster's name pairing are the same
