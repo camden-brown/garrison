@@ -30,6 +30,13 @@ var verbs = map[string]func(*core.Store, context.Context, string){
 	// screen. It always recreates, because a caller asking to apply from a
 	// script is asking for the server to match what is on disk.
 	"apply": func(s *core.Store, ctx context.Context, name string) { s.ApplyNow(ctx, name) },
+	// update-fresh throws away the download caches on the way through. It
+	// is a verb rather than a flag because a flag would have to sit before
+	// the subcommand to be parsed, and because it is not something to reach
+	// for absently: it costs the download the cache exists to avoid. Use it
+	// when an update reports success and the server keeps running the build
+	// it already had.
+	"update-fresh": func(s *core.Store, ctx context.Context, name string) { s.UpdateFresh(ctx, name) },
 }
 
 func verbNames() []string {

@@ -485,18 +485,43 @@ func humanBytes(n int64) string {
 // runs again. Without it, "the update failed" would mean something different
 // depending on where it failed, which is the same as meaning nothing.
 func Update(id, server string, trigger Trigger, archive Archiver, keep int) *Task {
+	return update(id, server, trigger, archive, false)
+}
+
+// UpdateFresh is Update with the download caches thrown away first.
+//
+// It exists because a cache is state that outlives the container, and state
+// that outlives the container can get stuck. SteamCMD did, on 2026-09-11: the
+// cached app manifest named a build it wanted, computed nothing to download,
+// and failed the same way on every retry, so the server sat two patches
+// behind while its update task reported success. Clearing the cache and
+// downloading again fixed it in one go.
+//
+// This is the price the download cache was bought at — "recreate the
+// container" stopped being a guaranteed reset — and the point of having it as
+// a verb is that paying it does not mean knowing which Docker volume to
+// remove.
+func UpdateFresh(id, server string, trigger Trigger, archive Archiver) *Task {
+	return update(id, server, trigger, archive, true)
+}
+
+func update(id, server string, trigger Trigger, archive Archiver, fresh bool) *Task {
+	steps := []Step{
+		quiesceStep(),
+		snapshotStep(archive),
+		stopStep(),
+		pullStep(),
+		removeStep(),
+	}
+	if fresh {
+		// After the container is gone, because a volume in use cannot be
+		// removed, and before the new one is created so it comes up to an
+		// empty cache rather than being handed one mid-download.
+		steps = append(steps, dropCachesStep())
+	}
 	return &Task{
 		ID: id, Server: server, Kind: KindUpdate, Trigger: trigger,
-		Steps: []Step{
-			quiesceStep(),
-			snapshotStep(archive),
-			stopStep(),
-			pullStep(),
-			removeStep(),
-			createStep(),
-			startStep(),
-			healthStep(),
-		},
+		Steps: append(steps, createStep(), startStep(), healthStep()),
 	}
 }
 

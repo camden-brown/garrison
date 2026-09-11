@@ -1,0 +1,11 @@
+# Captured 2026-09-11 from the lloesche/valheim-server container's own output,
+# two boots apart: one where SteamCMD could not update and the image fell back
+# to the installed build, and one where it worked.
+#
+# These lines carry no Valheim timestamp and come from a different supervisord
+# stream than the server, which is why strip() drops them and why they need
+# recognising before it runs.
+Sep 11 17:41:02 supervisord: valheim-updater INFO - Downloading/updating/validating Valheim server from Steam
+Sep 11 17:41:02 supervisord: valheim-updater ERROR - Failed to update Valheim server from Steam - however an existing version was found locally - using it
+Sep 11 18:10:20 supervisord: valheim-updater INFO - Downloading/updating/validating Valheim server from Steam
+Sep 11 18:10:43 supervisord: valheim-updater INFO - Valheim Server was updated - restarting

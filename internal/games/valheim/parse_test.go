@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/camden-brown/garrison/internal/model"
@@ -192,4 +193,61 @@ func TestParseIsTotalOverTheCapturedSession(t *testing.T) {
 			t.Errorf("the captured session yielded %d %v events, want %d", counts[kind], kind, want)
 		}
 	}
+}
+
+// The failure that hid for a whole afternoon: SteamCMD could not update, the
+// image said so and started the old build anyway, and Garrison's update task
+// reported success. The server then refused every player whose Steam client
+// had taken the patch.
+//
+// Lines are from testdata/updater.log, captured from the container.
+func TestAFailedUpdateIsAnError(t *testing.T) {
+	lines := readLines(t, "testdata/updater.log")
+
+	var errs []model.Event
+	for _, line := range lines {
+		if ev := (Game{}).Parse(line); ev.Kind == model.KindError {
+			errs = append(errs, ev)
+		}
+	}
+
+	if len(errs) != 1 {
+		t.Fatalf("parsed %d errors from the fixture, want the one failed update", len(errs))
+	}
+	if !strings.Contains(errs[0].Text, "Failed to update") {
+		t.Errorf("text = %q, want what the image actually said", errs[0].Text)
+	}
+	if errs[0].Raw == "" {
+		t.Error("the raw line is missing, so the console cannot show it")
+	}
+}
+
+// The updater talks constantly and almost none of it is worth an alert. Only
+// the failures are rescued from the lines strip() drops.
+func TestTheUpdatersChatterIsStillIgnored(t *testing.T) {
+	for _, line := range readLines(t, "testdata/updater.log") {
+		if strings.Contains(line, "ERROR") {
+			continue
+		}
+		if ev := (Game{}).Parse(line); !ev.Drop() {
+			t.Errorf("Parse(%q) produced %v, want it dropped", line, ev.Kind)
+		}
+	}
+}
+
+// readLines reads a fixture, skipping the provenance header.
+func readLines(t *testing.T, path string) []string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	var out []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
 }

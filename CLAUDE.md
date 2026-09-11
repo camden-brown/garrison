@@ -56,7 +56,12 @@ summary for a scheduled job.
 - `internal/services/logs` — one `docker logs --follow` per container, each
   line through the game's `Parse`, batched to the store every 100ms so a log
   flood cannot drive the render loop.
-- `internal/games/valheim` — the first plugin. Fixtures in `testdata/` are a
+- `internal/games/valheim` — the first plugin. `Parse` also rescues one line
+  from the image's own updater — `valheim-updater ERROR -` — because
+  everything without a Valheim timestamp is otherwise dropped, and the one
+  thing worth hearing is that the game files could not be updated. Without
+  it the update task reports success over a server still running the old
+  build, which is how a fleet ends up refusing every player on patch day. Fixtures in `testdata/` are a
   captured session from a real server, not documentation. It implements
   `Moddable` and `Installable`: its mods are BepInEx plugins from
   Thunderstore, and `Plan` derives `BEPINEX` from whether any are configured
@@ -366,6 +371,19 @@ render loop needs an hour on Windows hardware that no test here can supply.
   startup. A `Cache` mount is also the one volume a delete removes — see
   `dropCachesStep`, which removes nothing else, because a world is a world
   however a game describes one.
+
+  **The cache can get stuck, and that is the cost.** Measured the same day:
+  SteamCMD's cached app manifest named a build it wanted
+  (`TargetBuildID 25253791`), computed `BytesToDownload 0`, and failed
+  identically on every retry — so the server sat two patches behind while
+  the image logged `Failed to update ... using it` and started the old build
+  anyway. `garrison update-fresh <server>` drops the caches on the way
+  through, which is the same recovery without knowing which volume to
+  remove. Automating it — a failed update retrying itself fresh — was
+  considered and left alone: the failure is only visible in the container's
+  log, which reaches Garrison through the log service rather than the task,
+  and a task that reacts to something it cannot see is a task that surprises
+  people.
 - Sparklines use block elements (U+2580–U+259F), never Braille — Braille
   coverage in monospace fonts is unreliable and a fallback glyph shears the
   cell grid. Run fixed-width strings through `go-runewidth` before truncating.

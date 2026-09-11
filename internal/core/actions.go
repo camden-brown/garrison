@@ -286,6 +286,23 @@ func (s *Store) Update(ctx context.Context, instance string) {
 	})
 }
 
+// UpdateFresh updates after throwing away whatever the server had cached.
+//
+// The ordinary update reuses the download cache, which is what makes an apply
+// take a minute instead of four. When that cache is the problem — a stuck
+// SteamCMD manifest that fails identically on every retry — this is the way
+// out, and it is a separate verb because it costs the download the cache was
+// there to avoid.
+func (s *Store) UpdateFresh(ctx context.Context, instance string) {
+	if s.archives == nil {
+		s.raise(ctx, instance, fmt.Errorf("%s: update: no backup directory, and an update without one is not offered", instance))
+		return
+	}
+	s.submit(ctx, instance, tasks.KindUpdate, func(id string) *tasks.Task {
+		return tasks.UpdateFresh(id, instance, tasks.TriggerManual, s.archives.For(instance))
+	})
+}
+
 // Players is how many are connected to a server, and whether that is known at
 // all. It is the scheduler's window onto the fleet: not knowing is not the
 // same as nobody being there.

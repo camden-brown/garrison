@@ -23,6 +23,12 @@ const MetricSaveMillis = "world_save_ms"
 // what a reasonable person would have guessed, and the guesses would have
 // passed a test written from the same guess.
 func (Game) Parse(line string) model.Event {
+	// Before strip, because strip drops everything without Valheim's own
+	// timestamp and the image's updater has none.
+	if ev, ok := updaterEvent(line); ok {
+		return ev
+	}
+
 	body, at, ok := strip(line)
 	if !ok {
 		return model.Event{}
@@ -170,6 +176,46 @@ func strip(line string) (body string, at time.Time, ok bool) {
 	// No inner timestamp: image chatter, Unity warnings, SteamCMD output.
 	// There is nothing here Garrison can classify.
 	return "", time.Time{}, false
+}
+
+// updaterFailure is the marker for the image's own updater reporting a
+// problem, on a different supervisord stream from the server and with no
+// Valheim timestamp.
+const updaterFailure = "valheim-updater ERROR - "
+
+// updaterEvent rescues the one kind of line that would otherwise be invisible
+// and matters more than most.
+//
+// When SteamCMD cannot update the game, the image says so and then starts the
+// server anyway on the build it already had:
+//
+//	valheim-updater ERROR - Failed to update Valheim server from Steam -
+//	however an existing version was found locally - using it
+//
+// Garrison's update task sees none of that — the image swallows the failure
+// and exits zero — so the task reported success while the server stayed on an
+// old build. Which is exactly how a server ends up refusing every player the
+// day Valheim ships a patch and their clients update themselves: measured on
+// 2026-09-11, network version 39 against a fleet of 40s.
+//
+// The event carries no timestamp because the line has no Valheim one, and the
+// syslog stamp in front of it has no year. The store fills in the time it
+// arrived, which is within a second of the truth and is not a guess dressed
+// up as a reading.
+func updaterEvent(line string) (model.Event, bool) {
+	i := strings.Index(line, updaterFailure)
+	if i < 0 {
+		return model.Event{}, false
+	}
+	text := strings.TrimSpace(line[i+len(updaterFailure):])
+	if text == "" {
+		return model.Event{}, false
+	}
+	return model.Event{
+		Kind: model.KindError,
+		Text: text,
+		Raw:  line,
+	}, true
 }
 
 func after(s, prefix string) string { return strings.TrimSpace(strings.TrimPrefix(s, prefix)) }

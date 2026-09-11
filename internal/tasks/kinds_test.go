@@ -1079,3 +1079,45 @@ func TestDeleteWithNoCachesRemovesNoVolumes(t *testing.T) {
 		t.Errorf("removed %v, want nothing", got)
 	}
 }
+
+// An ordinary update keeps the download cache — that is what makes it a
+// minute instead of four.
+func TestUpdateKeepsTheCache(t *testing.T) {
+	d := fake.New(healthy("a"))
+	d.SetClock(func() time.Time { return at })
+	inst := model.Instance{Name: "a", Game: "valheim", Data: "/data"}
+	res := driverResolver{inst: inst, game: cachingGame{}}
+
+	p := runTask(t, d, res, tasks.Update("t1", "a", tasks.TriggerManual, &stubArchive{}, 3))
+	if p.State != tasks.StateDone {
+		t.Fatalf("update state = %v, history %v", p.State, p.History)
+	}
+	if got := d.VolumesRemoved(); len(got) != 0 {
+		t.Errorf("an ordinary update removed %v, want the cache kept", got)
+	}
+}
+
+// And the way out when the cache is the problem: a stuck SteamCMD manifest
+// fails identically on every retry, so the only fix is to stop reusing it.
+func TestUpdateFreshDropsTheCache(t *testing.T) {
+	d := fake.New(healthy("a"))
+	d.SetClock(func() time.Time { return at })
+	// A host path, because a volume-backed world cannot be snapshotted and
+	// the snapshot comes first (debt 3). The cache is a volume either way.
+	inst := model.Instance{Name: "a", Game: "valheim", Data: "/data"}
+	res := driverResolver{inst: inst, game: cachingGame{}}
+
+	p := runTask(t, d, res, tasks.UpdateFresh("t1", "a", tasks.TriggerManual, &stubArchive{}))
+	if p.State != tasks.StateDone {
+		t.Fatalf("update state = %v, history %v", p.State, p.History)
+	}
+	removed := d.VolumesRemoved()
+	if len(removed) != 1 || removed[0] != "garrison-a-dl" {
+		t.Fatalf("removed %v, want the download cache", removed)
+	}
+	for _, name := range removed {
+		if name == "the-world" {
+			t.Fatal("it removed the world")
+		}
+	}
+}
