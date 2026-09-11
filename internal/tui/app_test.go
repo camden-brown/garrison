@@ -39,23 +39,24 @@ var now = time.Date(2026, 9, 9, 21, 7, 0, 0, time.UTC)
 // stubStore stands in for internal/core so the shell can be driven without a
 // writer goroutine.
 type stubStore struct {
-	snap      core.Snapshot
-	ch        chan core.Snapshot
-	started   []string
-	stopped   []string
-	edits     []string
-	discarded []string
-	cancelled []string
-	restarted []string
-	backedUp  []string
-	restored  []string
-	notices   []string
-	created   []model.Instance
-	deleted   []string
-	commands  []string
-	reordered []string
-	updated   []string
-	applied   []string
+	snap       core.Snapshot
+	ch         chan core.Snapshot
+	started    []string
+	stopped    []string
+	edits      []string
+	discarded  []string
+	cancelled  []string
+	restarted  []string
+	backedUp   []string
+	restored   []string
+	notices    []string
+	created    []model.Instance
+	deleted    []string
+	commands   []string
+	reordered  []string
+	updated    []string
+	applied    []string
+	appliedNow []string
 }
 
 func newStub(snap core.Snapshot) *stubStore {
@@ -110,6 +111,11 @@ func (s *stubStore) Update(_ context.Context, instance string) {
 }
 func (s *stubStore) ApplySettings(_ context.Context, instance string, recreate bool) {
 	s.applied = append(s.applied, instance)
+}
+
+func (s *stubStore) ApplyNow(_ context.Context, instance string) {
+	s.applied = append(s.applied, instance)
+	s.appliedNow = append(s.appliedNow, instance)
 }
 
 // stubView records what it was handed and emits whatever it is told to.

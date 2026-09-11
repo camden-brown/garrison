@@ -473,3 +473,30 @@ func TestAPinnedModIsNotNagged(t *testing.T) {
 		t.Errorf("a pinned mod was nagged:\n%s", got)
 	}
 }
+
+// The bug this closes: a mod list is edited in the server's TOML, so nothing
+// is ever "pending" — and an apply that waits for a draft is a key that does
+// nothing at all, silently, on the one screen whose whole job is changing
+// what the server loads.
+func TestApplyingModsDoesNotWaitForADraft(t *testing.T) {
+	v := mods.New()
+	snap := snapshot("unordered", model.ModRef{ID: "Owner-Package"})
+
+	_, cmd := v.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}}, frame(), snap)
+	if cmd == nil {
+		t.Fatal("A sent nothing")
+	}
+	msg, ok := cmd().(tui.ActionMsg)
+	if !ok {
+		t.Fatalf("A sent %T, want an ActionMsg", cmd())
+	}
+	if msg.Op != core.OpApply || msg.Server != "server-one" {
+		t.Errorf("sent %+v, want an apply for server-one", msg)
+	}
+	if !msg.Now {
+		t.Error("the apply waits for a pending draft, and a mod change never makes one")
+	}
+	if !msg.Recreate {
+		t.Error("the apply does not recreate, and mods are only read when the server starts")
+	}
+}

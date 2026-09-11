@@ -24,6 +24,12 @@ var verbs = map[string]func(*core.Store, context.Context, string){
 	"restart": func(s *core.Store, ctx context.Context, name string) { s.Restart(ctx, name) },
 	"backup":  func(s *core.Store, ctx context.Context, name string) { s.Backup(ctx, name) },
 	"update":  func(s *core.Store, ctx context.Context, name string) { s.Update(ctx, name) },
+	// Apply is here for the same reason as the rest, and it was missing:
+	// every action in the TUI is a subcommand, and this one is how a mod
+	// list or a hand-edited setting reaches the server without opening the
+	// screen. It always recreates, because a caller asking to apply from a
+	// script is asking for the server to match what is on disk.
+	"apply": func(s *core.Store, ctx context.Context, name string) { s.ApplyNow(ctx, name) },
 }
 
 func verbNames() []string {

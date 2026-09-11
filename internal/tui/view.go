@@ -118,6 +118,11 @@ type ActionMsg struct {
 
 	// Archive is the backup a restore reads from, empty for every other op.
 	Archive string
+
+	// Now applies whether or not the form has pending edits, for a screen
+	// whose changes never go through the draft at all — the Mods list is
+	// edited in the server's TOML.
+	Now bool
 }
 
 // Action returns a tea.Cmd that emits an ActionMsg.
@@ -171,6 +176,15 @@ func Restore(server, archive string) tea.Cmd {
 func Apply(server string, recreate bool) tea.Cmd {
 	return func() tea.Msg {
 		return ActionMsg{Op: core.OpApply, Server: server, Recreate: recreate}
+	}
+}
+
+// ApplyNow rebuilds a server from what is on disk, pending edits or not. It
+// is what the Mods screen sends, because a mod list is edited in the TOML and
+// never appears as a draft.
+func ApplyNow(server string) tea.Cmd {
+	return func() tea.Msg {
+		return ActionMsg{Op: core.OpApply, Server: server, Recreate: true, Now: true}
 	}
 }
 

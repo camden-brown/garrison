@@ -26,6 +26,9 @@ type Store interface {
 	Restore(ctx context.Context, instance, archive string)
 	Update(ctx context.Context, instance string)
 	ApplySettings(ctx context.Context, instance string, recreate bool)
+	// ApplyNow rebuilds a server from what is on disk with no draft
+	// required, which is the only apply a mod change can use.
+	ApplyNow(ctx context.Context, instance string)
 	EditSetting(ctx context.Context, instance, key string, value any)
 	DiscardDraft(ctx context.Context, instance string)
 	CancelTask(ctx context.Context, id string)
@@ -491,6 +494,10 @@ func (a *App) dispatch(msg ActionMsg) tea.Cmd {
 	case core.OpUpdate:
 		a.store.Update(a.ctx, msg.Server)
 	case core.OpApply:
+		if msg.Now {
+			a.store.ApplyNow(a.ctx, msg.Server)
+			break
+		}
 		a.store.ApplySettings(a.ctx, msg.Server, msg.Recreate)
 	}
 	return nil

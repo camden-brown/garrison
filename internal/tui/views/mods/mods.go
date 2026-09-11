@@ -107,12 +107,16 @@ func (v *View) Update(msg tea.Msg, f tui.Frame, snap core.Snapshot) (tui.View, t
 		return &next, tui.ReorderMods(srv.Name, from, to)
 
 	case key.Matches(msgKey, keyApply):
+		// ApplyNow rather than Apply: a mod list is edited in the server's
+		// TOML, so there is never a draft pending and an apply that waits
+		// for one is a key that does nothing.
+		//
 		// Always a recreate. For a game that fetches its own mods the ids
 		// have just been written into config the server reads at boot, and
 		// for one whose mods are files the loader only looks at them when it
 		// starts — either way nothing a running container has already read
 		// changes.
-		return &next, tui.Apply(srv.Name, true)
+		return &next, tui.ApplyNow(srv.Name)
 	}
 
 	next.clamp(n)

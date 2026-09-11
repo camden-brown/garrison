@@ -55,12 +55,36 @@ func (s *Store) Restart(ctx context.Context, instance string) {
 // works out from the game's Schema — the store does not know what a setting
 // means, only that somebody decided this one is expensive.
 func (s *Store) ApplySettings(ctx context.Context, instance string, recreate bool) {
+	s.apply(ctx, instance, recreate, true)
+}
+
+// ApplyNow applies a server's configuration whether or not the form has
+// anything pending.
+//
+// The draft is not the only way the configuration gets ahead of the server.
+// Mods are edited in the TOML by hand and arrive with no draft at all, and
+// they only reach the game through an apply — so the Mods screen would
+// otherwise offer a key that silently did nothing, which is how it behaved
+// for exactly as long as it took to try it.
+//
+// Always a recreate: a caller with nothing pending is asking for the server
+// to be rebuilt from what is on disk, and that is the whole of the request.
+func (s *Store) ApplyNow(ctx context.Context, instance string) {
+	s.apply(ctx, instance, true, false)
+}
+
+// apply submits the task both entry points share.
+//
+// needPending is what separates them. The settings form should not rebuild a
+// container because somebody pressed A with no edits made; every other caller
+// is asking for the rebuild itself.
+func (s *Store) apply(ctx context.Context, instance string, recreate, needPending bool) {
 	srv, ok := s.Snapshot().Server(instance)
 	if !ok {
 		s.raise(ctx, instance, fmt.Errorf("%s: apply: no such server", instance))
 		return
 	}
-	if srv.Pending() == 0 {
+	if needPending && srv.Pending() == 0 {
 		return
 	}
 	if s.saver == nil {
