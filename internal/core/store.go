@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"github.com/camden-brown/garrison/internal/model"
 	"sync"
 	"time"
 
@@ -20,6 +21,11 @@ type Store struct {
 	snap   Snapshot
 	subs   []chan Snapshot
 	closed bool
+
+	// stopped is closed when Run returns, so a mutation sent from a task
+	// goroutine after shutdown is dropped rather than blocking that
+	// goroutine forever on a channel nobody is reading.
+	stopped chan struct{}
 
 	muts         chan Mutation
 	tasks        Tasks
@@ -80,6 +86,7 @@ func New(opts Options) *Store {
 	}
 	return &Store{
 		muts:         make(chan Mutation, opts.Buffer),
+		stopped:      make(chan struct{}),
 		tasks:        opts.Tasks,
 		saver:        opts.Saver,
 		archives:     opts.Archives,
@@ -112,6 +119,7 @@ func (s *Store) AttachTasks(t Tasks) {
 // publishes a snapshot after each one, until ctx is cancelled.
 func (s *Store) Run(ctx context.Context) {
 	defer s.closeSubs()
+	defer close(s.stopped)
 	for {
 		select {
 		case <-ctx.Done():
@@ -235,3 +243,47 @@ func (s *Store) closeSubs() {
 // Same knot as AttachTasks: the runner needs the resolver, the resolver needs
 // the store, and cmd is where that circle is closed.
 func (s *Store) AttachCommander(c Commander) { s.commander = c }
+
+// sendFromTask delivers a mutation raised by a task step, which runs on its
+// own goroutine and has no context of the store's to wait on.
+func (s *Store) sendFromTask(m Mutation) {
+	select {
+	case s.muts <- m:
+	case <-s.stopped:
+	}
+}
+
+// taskSaver is the Saver handed to a task, wrapped so the store learns what
+// the configuration on disk now says.
+//
+// This is what clears the "unapplied changes" badge. stillPending drops draft
+// entries the configuration has caught up with, and it compares against the
+// instance in the snapshot — which nothing was updating after an apply, so an
+// applied change stayed pending forever and confirming it asked again.
+//
+// Wrapping the Saver rather than reporting from the action means the rollback
+// is covered too: writeConfigStep's compensation writes the previous instance
+// back, and the store hears about that the same way and restores the draft.
+func (s *Store) taskSaver() Saver {
+	if s.saver == nil {
+		return nil
+	}
+	return notifyingSaver{inner: s.saver, store: s}
+}
+
+type notifyingSaver struct {
+	inner Saver
+	store *Store
+}
+
+func (n notifyingSaver) Save(inst model.Instance) error {
+	if err := n.inner.Save(inst); err != nil {
+		return err
+	}
+	// Only on success. A save that failed changed nothing, and reporting it
+	// would clear a draft whose edits are still only in memory.
+	n.store.sendFromTask(InstanceAdded{At: n.store.now(), Instance: inst})
+	return nil
+}
+
+func (n notifyingSaver) Delete(name string) error { return n.inner.Delete(name) }

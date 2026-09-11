@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -188,13 +189,35 @@ func (e *recordingEngine) kinds() []tasks.Kind {
 	return out
 }
 
-func (e *recordingEngine) waitFor(t *testing.T, what string) {
+func (e *recordingEngine) waitFor(t *testing.T, what string) *tasks.Task {
 	t.Helper()
 	select {
 	case <-e.seen:
 	case <-time.After(2 * time.Second):
 		t.Fatalf("timed out waiting for %s", what)
 	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if len(e.submitted) == 0 {
+		return nil
+	}
+	return e.submitted[len(e.submitted)-1]
+}
+
+// applyWriteStep runs an apply task's first step, which is the one that
+// writes the configuration. The engine would run it; this stands in for the
+// engine so the store's half can be tested without one.
+func applyWriteStep(t *testing.T, task *tasks.Task) {
+	t.Helper()
+	if task == nil || len(task.Steps) == 0 {
+		t.Fatal("the apply task has no steps")
+	}
+	sc := &tasks.StepCtx{
+		Values: map[string]any{},
+		Log:    func(string) {},
+		Revise: func(time.Duration) {},
+	}
+	_ = task.Steps[0].Run(context.Background(), sc)
 }
 
 // An action is a task submission, not work the store does itself. Everything
@@ -405,11 +428,16 @@ type countingSaver struct {
 	mu      sync.Mutex
 	n       int
 	deleted []string
+	// err makes the save fail, to prove a draft survives one.
+	err error
 }
 
 func (c *countingSaver) Save(model.Instance) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.err != nil {
+		return c.err
+	}
 	c.n++
 	return nil
 }
@@ -421,4 +449,88 @@ func (c *countingSaver) Delete(name string) error {
 	defer c.mu.Unlock()
 	c.deleted = append(c.deleted, name)
 	return nil
+}
+
+// The bug as reported: apply, answer yes, and the form asks to apply again.
+//
+// stillPending drops draft entries the configuration has caught up with, and
+// it compares against the instance in the snapshot — which nothing updated
+// after an apply, so the change stayed pending forever. The task writes the
+// file; this is the store finding out.
+func TestApplyingClearsTheDraft(t *testing.T) {
+	engine := newEngine()
+	saver := &countingSaver{}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	s := New(Options{Now: func() time.Time { return at }, Saver: saver})
+	s.AttachTasks(engine)
+	go s.Run(ctx)
+	sub := s.Subscribe()
+
+	s.InstancesLoaded(ctx, []model.Instance{{
+		Name: "a", Game: "valheim", Settings: map[string]any{"ServerName": "Old"},
+	}})
+	s.FleetObserved(ctx, at, []host.Container{{Instance: "a", Game: "valheim", State: model.StateRunning}})
+	waitFor(t, sub, "the fleet", func(s Snapshot) bool { return len(s.Servers) == 1 })
+
+	s.EditSetting(ctx, "a", "ServerName", "New")
+	waitFor(t, sub, "the draft", func(s Snapshot) bool {
+		srv, ok := s.Server("a")
+		return ok && srv.Pending() == 1
+	})
+
+	s.ApplySettings(ctx, "a", true)
+	task := engine.waitFor(t, "the apply task")
+
+	// Run the task's config write the way the engine would. The saver the
+	// store handed over is the one that reports back.
+	applyWriteStep(t, task)
+
+	waitFor(t, sub, "the draft to clear", func(s Snapshot) bool {
+		srv, ok := s.Server("a")
+		return ok && srv.Pending() == 0
+	})
+
+	srv, _ := s.Snapshot().Server("a")
+	if got, _ := srv.Setting("ServerName"); got != "New" {
+		t.Errorf("ServerName = %v after applying, want New", got)
+	}
+}
+
+// A save that failed changed nothing, so the draft has to survive it — the
+// edits exist only in memory and clearing them would lose the work.
+func TestAFailedApplyKeepsTheDraft(t *testing.T) {
+	engine := newEngine()
+	saver := &countingSaver{err: errors.New("disk full")}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	s := New(Options{Now: func() time.Time { return at }, Saver: saver})
+	s.AttachTasks(engine)
+	go s.Run(ctx)
+	sub := s.Subscribe()
+
+	s.InstancesLoaded(ctx, []model.Instance{{
+		Name: "a", Game: "valheim", Settings: map[string]any{"ServerName": "Old"},
+	}})
+	s.FleetObserved(ctx, at, []host.Container{{Instance: "a", Game: "valheim", State: model.StateRunning}})
+	waitFor(t, sub, "the fleet", func(s Snapshot) bool { return len(s.Servers) == 1 })
+
+	s.EditSetting(ctx, "a", "ServerName", "New")
+	waitFor(t, sub, "the draft", func(s Snapshot) bool {
+		srv, ok := s.Server("a")
+		return ok && srv.Pending() == 1
+	})
+
+	s.ApplySettings(ctx, "a", true)
+	task := engine.waitFor(t, "the apply task")
+	applyWriteStep(t, task) // fails
+
+	// Give the store a moment to have not cleared it.
+	time.Sleep(50 * time.Millisecond)
+	srv, _ := s.Snapshot().Server("a")
+	if srv.Pending() != 1 {
+		t.Errorf("pending = %d after a failed save, want the draft kept", srv.Pending())
+	}
 }

@@ -79,7 +79,7 @@ func (s *Store) ApplySettings(ctx context.Context, instance string, recreate boo
 	next.Settings = settings
 
 	s.submit(ctx, instance, tasks.KindApplyConfig, func(id string) *tasks.Task {
-		return tasks.ApplyConfig(id, instance, tasks.TriggerManual, next, s.saver, recreate)
+		return tasks.ApplyConfig(id, instance, tasks.TriggerManual, next, s.taskSaver(), recreate)
 	})
 }
 
@@ -150,6 +150,10 @@ func (s *Store) ReorderMods(ctx context.Context, instance string, from, to int) 
 	// The order lives in the config files the game reads, so it takes an
 	// apply to reach the server. Recreate, because for every game that has
 	// this the mod list is fixed when the container is built.
+	//
+	// The plain saver, not taskSaver: the reorder was already written and
+	// announced above, so the task's write is the same bytes and a second
+	// announcement would say nothing new.
 	s.submit(ctx, instance, tasks.KindApplyConfig, func(id string) *tasks.Task {
 		return tasks.ApplyConfig(id, instance, tasks.TriggerManual, next, s.saver, true)
 	})
@@ -221,7 +225,7 @@ func (s *Store) DeleteServer(ctx context.Context, instance string) {
 		return
 	}
 	s.submit(ctx, instance, tasks.KindDelete, func(id string) *tasks.Task {
-		return tasks.Delete(id, instance, tasks.TriggerManual, s.saver, inst)
+		return tasks.Delete(id, instance, tasks.TriggerManual, s.taskSaver(), inst)
 	})
 }
 
