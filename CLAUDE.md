@@ -341,6 +341,31 @@ render loop needs an hour on Windows hardware that no test here can supply.
   instead of `data =`, which is what this number argued for. The world then
   lives inside the runtime, which is why a host path is still the default —
   and why archiving a volume is not implemented yet (debt 3).
+- **A recreated container re-downloads the game unless something keeps it.**
+  Everything under a server image's install path is in the container's own
+  layer, and Garrison recreates the container for every settings change. For
+  Valheim that was ~6 GB thrown away per apply — the SteamCMD download, the
+  installation rsynced from it, and the BepInEx merge, which is a second full
+  copy — with 2 GB of it fetched from Steam again.
+
+  `model.Mount.Cache` marks a mount whose contents are rebuildable, and
+  Valheim's plan puts `/opt/valheim/dl` on one. **Only the download**, never
+  the installation: SteamCMD validates against the cache while the install and
+  the loader merge are rebuilt every time, so "recreate the container" stays a
+  real reset and a corrupt install is still fixed by an apply. Measured
+  2026-09-11 on the live server, back to back, apply to joinable:
+
+  | | cold cache | warm cache |
+  | --- | ---: | ---: |
+  | total | 2m09s | **1m19s** |
+  | of which SteamCMD | ~50s of download | 9s validating |
+  | of which local copies | 13s | 13s |
+  | of which Valheim starting | ~35s | ~35s |
+
+  The network is gone; what is left is two local copies and the game's own
+  startup. A `Cache` mount is also the one volume a delete removes — see
+  `dropCachesStep`, which removes nothing else, because a world is a world
+  however a game describes one.
 - Sparklines use block elements (U+2580–U+259F), never Braille — Braille
   coverage in monospace fonts is unreliable and a fallback glyph shears the
   cell grid. Run fixed-width strings through `go-runewidth` before truncating.
