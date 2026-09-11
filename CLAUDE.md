@@ -253,11 +253,19 @@ render loop needs an hour on Windows hardware that no test here can supply.
    upward — the fake driver's is the one exception, and it says why. A service
    never imports `core`: it declares the observer interface it needs and `cmd`
    wires the store to it ([ADR 0007](docs/decisions/0007-services-and-store-meet-in-cmd.md)).
-4. **Views own cursor, scroll and filter. Nothing else.** Everything else lives
+4. **A view that owns the keyboard says so.** `View.Capturing()` is true
+   while a view has a modal or a text field, and the shell routes every key
+   there instead of acting on its own bindings — only ctrl+c still escapes.
+   Without it "y" confirming an apply was read as "copy the join details".
+   And no view may bind a key the shell owns (`q f F n y ? X [ ] : ctrl+p
+   1-7`): the shell handles its own first, so the binding would never fire.
+   `TestNoViewBindsAShellKey` enforces it. Both halves are the same DESIGN
+   rule — a key means the same thing in every view or it does not exist.
+5. **Views own cursor, scroll and filter. Nothing else.** Everything else lives
    in the store, so a view can be rebuilt on resize without losing anything.
-5. **Slower than one frame is a task.** No exceptions, including "this pull is
+6. **Slower than one frame is a task.** No exceptions, including "this pull is
    usually fast." Anything in `internal/tasks` declares its compensation.
-6. **Library packages return errors; only `cmd` and the shell log them.** Wrap
+7. **Library packages return errors; only `cmd` and the shell log them.** Wrap
    with the instance and the operation so an alert can say
    `zomboid-main: recreate container: port 16261 already allocated`.
 
@@ -270,6 +278,9 @@ render loop needs an hour on Windows hardware that no test here can supply.
 - A view importing `internal/host` — a missing snapshot field or core action.
 - A `Step` that changes a volume with a nil `Undo` — an undeclared risk.
 - Two views drawing the same table differently — promote a component.
+- A view binding a letter the shell already uses — the binding never fires,
+  because the shell handles its keys first. Pick another letter; the arch of
+  the keymap is that one key means one thing.
 - Reading `inst.Settings["Key"]` by string in the TUI — go through `Schema()`.
 
 ## Platform facts that shape the code

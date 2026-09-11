@@ -798,3 +798,10 @@ func plural(n int) string {
 	}
 	return "s"
 }
+
+// Capturing is true while an apply is being confirmed or a field is being
+// edited.
+//
+// The confirmation is the case that was broken: it is answered with "y", and
+// the shell reads "y" as "copy the join details" unless told otherwise.
+func (v *View) Capturing() bool { return v.confirming || v.editing }

@@ -279,6 +279,21 @@ func (a *App) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 
+	// A view in a modal or a text field owns every key. Checked before the
+	// shell's own bindings, which is the whole point: "y" confirms an apply
+	// rather than copying the join details, and the shell has no way to know
+	// that without asking.
+	//
+	// ctrl+c still quits. One key has to always work, and a view that
+	// swallowed it would be a view you cannot get out of.
+	// Regardless of where focus nominally sits. A confirmation is up because
+	// somebody asked for it, and requiring the stage to be focused first
+	// would mean the modal is on screen while "y" still means something
+	// else — which is the bug this exists to prevent.
+	if a.capturing() && msg.String() != "ctrl+c" {
+		return a.routeToView(msg)
+	}
+
 	switch k := msg.String(); k {
 	case "ctrl+c", "q":
 		return a, tea.Quit
@@ -759,4 +774,12 @@ func (a *App) engineWordPlain() string {
 		return transport
 	}
 	return transport + " unreachable"
+}
+
+// capturing reports whether the active view has the keyboard.
+func (a *App) capturing() bool {
+	if len(a.views) == 0 {
+		return false
+	}
+	return a.views[a.active].Capturing()
 }

@@ -305,3 +305,6 @@ func busiestHour(hours [24]float64) int {
 	}
 	return at
 }
+
+// Capturing is false: nothing here takes text.
+func (v *View) Capturing() bool { return false }

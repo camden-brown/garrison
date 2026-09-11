@@ -121,8 +121,8 @@ func TestFilterNarrowsToOneClass(t *testing.T) {
 		ev(model.KindInfo, "some noise"),
 	)
 
-	// f cycles all → chat.
-	v := press(console.New(), snap, "f")
+	// c cycles all → chat.
+	v := press(console.New(), snap, "c")
 	got := v.Render(frame(), snap)
 
 	if !strings.Contains(got, "hello there") {
@@ -139,7 +139,7 @@ func TestFilterNarrowsToOneClass(t *testing.T) {
 func TestFilterCyclesBackToAll(t *testing.T) {
 	snap := snapshot(ev(model.KindInfo, "some noise"))
 
-	v := press(console.New(), snap, "f", "f", "f", "f")
+	v := press(console.New(), snap, "c", "c", "c", "c")
 	if got := v.Render(frame(), snap); !strings.Contains(got, "some noise") {
 		t.Errorf("four presses should return to all:\n%s", got)
 	}
@@ -293,7 +293,7 @@ func TestGoldenRenders(t *testing.T) {
 				ev(model.KindInfo, "server started"),
 			),
 			setup: func(v tui.View, snap core.Snapshot) tui.View {
-				return press(v, snap, "f", "f", "f")
+				return press(v, snap, "c", "c", "c")
 			},
 		},
 	}
@@ -497,14 +497,14 @@ func TestComposingSwallowsTheViewsKeys(t *testing.T) {
 	snap := zomboidSnapshot(events...)
 
 	v, _ := pressIn(console.New(), zomboidFrame(), snap, "i")
-	v, _ = pressIn(v, zomboidFrame(), snap, "g", "g", "f")
+	v, _ = pressIn(v, zomboidFrame(), snap, "g", "g", "c")
 
 	got := v.Render(zomboidFrame(), snap)
 	if !strings.Contains(got, "line 199") {
 		t.Errorf("typing g jumped the console:\n%s", got)
 	}
 	if strings.Contains(got, "filter: chat") {
-		t.Errorf("typing f cycled the class filter:\n%s", got)
+		t.Errorf("typing c cycled the class filter:\n%s", got)
 	}
 }
 

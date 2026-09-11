@@ -108,14 +108,17 @@ func (v *View) Available(inst model.Instance) (bool, string) {
 }
 
 var (
-	keyUp      = key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "back"))
-	keyDown    = key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "forward"))
-	keyPageUp  = key.NewBinding(key.WithKeys("pgup", "ctrl+b"), key.WithHelp("pgup", "page back"))
-	keyPageDn  = key.NewBinding(key.WithKeys("pgdown", "ctrl+f"), key.WithHelp("pgdn", "page forward"))
-	keyTop     = key.NewBinding(key.WithKeys("g", "home"), key.WithHelp("g", "oldest"))
-	keyBottom  = key.NewBinding(key.WithKeys("G", "end"), key.WithHelp("G", "newest"))
-	keyFreeze  = key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "freeze"))
-	keyFilter  = key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "class filter"))
+	keyUp     = key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "back"))
+	keyDown   = key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "forward"))
+	keyPageUp = key.NewBinding(key.WithKeys("pgup", "ctrl+b"), key.WithHelp("pgup", "page back"))
+	keyPageDn = key.NewBinding(key.WithKeys("pgdown", "ctrl+f"), key.WithHelp("pgdn", "page forward"))
+	keyTop    = key.NewBinding(key.WithKeys("g", "home"), key.WithHelp("g", "oldest"))
+	keyBottom = key.NewBinding(key.WithKeys("G", "end"), key.WithHelp("G", "newest"))
+	keyFreeze = key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "freeze"))
+	// "c" for class, not "f". DESIGN's rule is that a key means the same
+	// thing in every view or it does not exist, and "f" is the fleet
+	// everywhere — the shell handles it first, so this binding never fired.
+	keyFilter  = key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "class filter"))
 	keySearch  = key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter text"))
 	keyCompose = key.NewBinding(key.WithKeys("i", "enter"), key.WithHelp("i", "command"))
 	keySend    = key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "send"))
@@ -391,7 +394,7 @@ func (v *View) emptyText(srv core.Server) string {
 		return "Nothing matching \"" + v.text.Query + "\". esc clears it."
 	}
 	if v.filter != filterAll {
-		return "Nothing matching " + v.filter.String() + ". f cycles the filter."
+		return "Nothing matching " + v.filter.String() + ". c cycles the filter."
 	}
 	if srv.State != model.StateRunning {
 		return "Nothing yet — the server is not running."
@@ -429,3 +432,7 @@ func (v *View) commandLine(f tui.Frame, srv core.Server) string {
 		Value: v.typed, Cursor: v.caret, Width: field, Theme: t,
 	}.Render()
 }
+
+// Capturing is true while a command is being composed or the text filter has
+// the keyboard. Both are free text, and the shell's bindings are letters.
+func (v *View) Capturing() bool { return v.composing || v.text.Active }

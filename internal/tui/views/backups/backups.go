@@ -278,3 +278,7 @@ func (v *View) footer(f tui.Frame, srv core.Server) string {
 
 	return warning + "\n" + prompt + input
 }
+
+// Capturing is true while a restore is waiting for the server's name, which
+// is free text containing letters the shell binds.
+func (v *View) Capturing() bool { return v.confirming }

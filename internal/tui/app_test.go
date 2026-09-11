@@ -19,6 +19,8 @@ import (
 	"github.com/camden-brown/garrison/internal/model"
 	"github.com/camden-brown/garrison/internal/tui"
 	"github.com/camden-brown/garrison/internal/tui/comp"
+	viewsall "github.com/camden-brown/garrison/internal/tui/views/all"
+	"github.com/camden-brown/garrison/internal/tui/views/settings"
 
 	// The wizard offers the registered games, so the shell's tests need
 	// them registered — the same blank import cmd uses.
@@ -112,8 +114,12 @@ func (s *stubStore) ApplySettings(_ context.Context, instance string, recreate b
 
 // stubView records what it was handed and emits whatever it is told to.
 type stubView struct {
-	rendered tui.Frame
-	emit     tea.Cmd
+	rendered  tui.Frame
+	emit      tea.Cmd
+	capturing bool
+	// seen records the keys the shell actually routed here, which is how a
+	// test proves the shell did not swallow one.
+	seen []string
 }
 
 func (v *stubView) ID() tui.ViewID                          { return tui.ViewFleet }
@@ -122,6 +128,11 @@ func (v *stubView) Keys() []key.Binding                     { return nil }
 func (v *stubView) Available(model.Instance) (bool, string) { return true, "" }
 
 func (v *stubView) Update(msg tea.Msg, _ tui.Frame, _ core.Snapshot) (tui.View, tea.Cmd) {
+	// Record what actually arrived. A key the shell handled first never
+	// reaches here, which is exactly what the shell tests assert on.
+	if k, ok := msg.(tea.KeyMsg); ok {
+		v.seen = append(v.seen, k.String())
+	}
 	return v, v.emit
 }
 
@@ -1310,5 +1321,146 @@ func TestSteppingWraps(t *testing.T) {
 	app.View()
 	if v.rendered.Server != "a" {
 		t.Errorf("stepping past the end gave %q, want a wrap to a", v.rendered.Server)
+	}
+}
+
+// Capturing lets a test put the stub view into the mode a real one enters
+// when it owns the keyboard.
+func (v *stubView) Capturing() bool { return v.capturing }
+
+// sharing is what the share panel copied, for asserting it did not.
+func (s *stubStore) sharing() []string { return s.commands }
+
+// ---- the shell must not swallow a view's keys ---------------------------
+//
+// This is the gap that let a bug ship. Every view test calls Update directly,
+// so a key the shell intercepts first looks perfectly handled in isolation and
+// never arrives in practice. These drive the shell instead.
+
+// A view that owns the keyboard gets every key, including ones the shell
+// binds. "y" answering an apply was being read as "copy the join details".
+func TestACapturingViewGetsTheShellsKeys(t *testing.T) {
+	v := &stubView{capturing: true}
+	store := newStub(snapshot())
+	app := newApp(t, store, v)
+
+	// Focus the stage, which is where a modal lives.
+	app.Update(tea.KeyMsg{Type: tea.KeyTab})
+	app.Update(tea.KeyMsg{Type: tea.KeyTab})
+
+	for _, k := range []string{"y", "n", "f", "q", "X", "?"} {
+		app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)})
+	}
+
+	for _, want := range []string{"y", "n", "f", "q", "X", "?"} {
+		var found bool
+		for _, got := range v.seen {
+			if got == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("the shell swallowed %q from a capturing view; it saw %v", want, v.seen)
+		}
+	}
+	if len(store.created) != 0 || len(store.sharing()) != 0 {
+		t.Error("a capturing view's keys still triggered shell actions")
+	}
+}
+
+// One key has to always work. A view that swallowed ctrl+c would be a view
+// you cannot get out of.
+func TestCtrlCEscapesACapturingView(t *testing.T) {
+	app := newApp(t, newStub(snapshot()), &stubView{capturing: true})
+	app.Update(tea.KeyMsg{Type: tea.KeyTab})
+	app.Update(tea.KeyMsg{Type: tea.KeyTab})
+
+	_, cmd := app.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatal("ctrl+c produced no command in a capturing view")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Error("ctrl+c did not quit out of a capturing view")
+	}
+}
+
+// A view that is not capturing keeps the shell's meanings, which is the other
+// half of the rule: a key means the same thing everywhere or it does not
+// exist.
+func TestANonCapturingViewDoesNotStealShellKeys(t *testing.T) {
+	v := &stubView{capturing: false}
+	app := newApp(t, newStub(snapshot()), v)
+
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	if got := app.View(); !strings.Contains(got, "HELP") {
+		t.Errorf("? did not open help over a non-capturing view:\n%s", got)
+	}
+}
+
+// No view may bind a key the shell already owns, because the shell handles
+// its own first and the binding would never fire. This is the rule DESIGN
+// states and the one the console's old "f" filter broke.
+func TestNoViewBindsAShellKey(t *testing.T) {
+	shell := map[string]string{
+		"q": "quit", "f": "fleet", "F": "ambient", "n": "new server",
+		"y": "share", "?": "help", "X": "delete", "[": "previous server",
+		"]": "next server", ":": "command line", "ctrl+p": "palette",
+		"1": "screen", "2": "screen", "3": "screen", "4": "screen",
+		"5": "screen", "6": "screen", "7": "screen",
+	}
+
+	for _, view := range viewsall.Views() {
+		for _, binding := range view.Keys() {
+			for _, k := range binding.Keys() {
+				if what, taken := shell[k]; taken {
+					t.Errorf("%s binds %q, which the shell owns for %q — the binding can never fire",
+						view.Title(), k, what)
+				}
+			}
+		}
+	}
+}
+
+// The bug as reported: pressing "y" to confirm a settings change copied the
+// server's join details instead. Driven through the shell with the real
+// settings view, which is the only way to see it — the view's own tests call
+// Update directly and never meet the shell's bindings.
+func TestConfirmingASettingsChangeIsNotAShare(t *testing.T) {
+	inst := model.Instance{
+		Name: "valheim-main", Game: "valheim", Data: `C:\gameservers\valheim-main`,
+		Settings: map[string]any{"ServerName": "Before"},
+	}
+	snap := core.Reduce(
+		core.Snapshot{Engine: core.Engine{Transport: "npipe"}},
+		core.InstancesLoaded{At: now, Instances: []model.Instance{inst}},
+		core.FleetObserved{At: now, Containers: []host.Container{
+			{Instance: "valheim-main", Game: "valheim", State: model.StateRunning},
+		}},
+		// A pending edit, so there is something to apply.
+		core.SettingEdited{At: now, Server: "valheim-main", Key: "ServerName", Value: "After"},
+	)
+
+	store := newStub(snap)
+	app := tui.NewApp(context.Background(), store, comp.NewTheme(false), settings.New())
+	app.Update(tea.WindowSizeMsg{Width: 120, Height: 34})
+
+	// Land on the server, then focus the stage so the form has the keys.
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+	typeLine(app, "valheim-main")
+	app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	app.Update(tea.KeyMsg{Type: tea.KeyTab})
+	app.Update(tea.KeyMsg{Type: tea.KeyTab})
+
+	// A opens the confirmation; y answers it.
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	if _, cmd := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}); cmd != nil {
+		app.Update(cmd())
+	}
+
+	if got := app.View(); strings.Contains(got, "SHARE") {
+		t.Errorf("y opened the share panel instead of confirming:\n%s", got)
+	}
+	if len(store.applied) == 0 {
+		t.Error("y did not apply the pending change")
 	}
 }

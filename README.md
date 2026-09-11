@@ -243,11 +243,16 @@ the same thing in every view or it does not exist. Lowercase is safe;
 | <kbd>r</kbd> / <kbd>U</kbd> | Restart / update |
 | <kbd>b</kbd> / <kbd>B</kbd> | Backup now / restore — <kbd>B</kbd> asks for the server's name in full |
 | <kbd>Space</kbd> | Freeze the console; toggle a setting on the settings form |
+| <kbd>c</kbd> | Console: cycle the class filter (all / chat / players / problems) |
 
 Three keys ask you to type the server's name in full, and only three:
 <kbd>X</kbd> to delete a server, <kbd>B</kbd> to restore over a live world,
 and applying a setting the game marks as a wipe risk. That is deliberate
 friction in exactly the places where a reflex would cost a world.
+
+While a confirmation or a text field is up, the screen owns every key — so
+<kbd>y</kbd> answers the question in front of you rather than copying the join
+details. Only <kbd>Ctrl</kbd>+<kbd>C</kbd> always escapes.
 
 Press <kbd>?</kbd> in the app for the list that is generated from the code
 rather than typed here — it cannot drift.

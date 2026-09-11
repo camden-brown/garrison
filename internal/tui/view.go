@@ -58,6 +58,21 @@ type View interface {
 	// selected server's.
 	Available(inst model.Instance) (bool, string)
 
+	// Capturing reports that this view has the keyboard and the shell must
+	// not act on its own bindings.
+	//
+	// It exists because the shell handles its keys first, so a confirmation
+	// answered with "y" was being read as "copy the join details" and a
+	// console filter opened with "f" as "go to the fleet". A view in a
+	// modal or typing into a field needs every key, and the shell cannot
+	// know that from the outside.
+	//
+	// It is deliberately not "did you handle this key". A view that answers
+	// per-key would have to enumerate them twice — once to say so and once
+	// to act — and the two would drift. This asks about a mode, which a
+	// view already knows it is in.
+	Capturing() bool
+
 	// Update takes the Frame as well as the message, so a view never has to
 	// remember what it was last told. DESIGN §7 writes this without the
 	// Frame; that version only works because Bubble Tea happens to render

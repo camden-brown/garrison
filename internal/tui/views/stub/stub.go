@@ -70,3 +70,6 @@ func (v *View) Render(f tui.Frame, snap core.Snapshot) string {
 	b.WriteString("\n")
 	return b.String()
 }
+
+// Capturing is false: a stub handles no keys at all.
+func (v *View) Capturing() bool { return false }

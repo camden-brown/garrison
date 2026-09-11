@@ -777,3 +777,8 @@ func emptyExplanation(t *comp.Theme, snap core.Snapshot) string {
 	return t.Dim.Render("No containers labelled garrison.managed=1.") + "\n" +
 		t.Dim.Render("The fleet is found by label, so anything Garrison created appears here.")
 }
+
+// Capturing is true while a confirmation is up or the filter has the
+// keyboard. Both take keys the shell also binds — "y" answers a stop, and a
+// server name being typed into the filter contains letters that are verbs.
+func (v *View) Capturing() bool { return v.confirm != "" || v.filter.Active }

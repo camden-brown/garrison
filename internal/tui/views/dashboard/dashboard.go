@@ -247,3 +247,6 @@ func logTail(f tui.Frame, srv core.Server) string {
 		Focused: f.Focused,
 	}.Render(strings.TrimRight(b.String(), "\n"))
 }
+
+// Capturing is false: the dashboard only reads.
+func (v *View) Capturing() bool { return false }

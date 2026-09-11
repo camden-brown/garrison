@@ -251,3 +251,7 @@ func stepGlyph(t *comp.Theme, task engine.Progress, i int) (string, lipglossStyl
 	}
 	return pending, t.Dim
 }
+
+// Capturing is false: the cancel key confirms with an uppercase letter
+// rather than a modal.
+func (v *View) Capturing() bool { return false }

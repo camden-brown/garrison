@@ -279,3 +279,7 @@ func footer(m games.Moddable) string {
 	}
 	return "Order does not matter for this game. Add or remove mods in the server's TOML."
 }
+
+// Capturing is false: this view has no modal and no text field, so the
+// shell's keys keep their meanings here.
+func (v *View) Capturing() bool { return false }
