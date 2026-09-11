@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -897,6 +899,127 @@ func TestAnApplyWithNoInstallerIsFine(t *testing.T) {
 
 	next := model.Instance{Name: "a", Game: "valheim", Data: "/data"}
 	p := runTask(t, d, res, tasks.ApplyConfig("t1", "a", tasks.TriggerManual, next, &memSaver{}, false))
+	if p.State != tasks.StateDone {
+		t.Fatalf("apply state = %v, history %v", p.State, p.History)
+	}
+}
+
+// compilingGame stands in for a game whose settings become files — Zomboid's
+// shape, without importing it.
+type compilingGame struct {
+	valheimGame
+	files []model.File
+	err   error
+}
+
+func (g compilingGame) Compile(model.Instance) ([]model.File, error) {
+	return g.files, g.err
+}
+
+// The gap this closes: Compile was called, the count was logged, and nothing
+// ever wrote the files. A game configured by files would have had its TOML
+// updated and its server left reading the old configuration.
+func TestApplyWritesTheCompiledFiles(t *testing.T) {
+	d := fake.New(healthy("a"))
+	d.SetClock(func() time.Time { return at })
+	data := t.TempDir()
+
+	game := compilingGame{files: []model.File{
+		{Path: "Server/servertest.ini", Mode: 0o644, Data: []byte("MaxPlayers=16\n")},
+		{Path: "Server/servertest_SandboxVars.lua", Mode: 0o644, Data: []byte("return {}\n")},
+	}}
+	inst := model.Instance{Name: "a", Game: "zomboid", Data: data}
+	res := driverResolver{inst: inst, game: game}
+
+	p := runTask(t, d, res, tasks.ApplyConfig("t1", "a", tasks.TriggerManual, inst, &memSaver{}, false))
+	if p.State != tasks.StateDone {
+		t.Fatalf("apply state = %v, history %v", p.State, p.History)
+	}
+
+	got, err := os.ReadFile(filepath.Join(data, "Server", "servertest.ini"))
+	if err != nil {
+		t.Fatalf("the compiled config was not written: %v", err)
+	}
+	if string(got) != "MaxPlayers=16\n" {
+		t.Errorf("servertest.ini = %q, want what Compile produced", got)
+	}
+	if _, err := os.Stat(filepath.Join(data, "Server", "servertest_SandboxVars.lua")); err != nil {
+		t.Errorf("the second compiled file was not written: %v", err)
+	}
+}
+
+// An apply that writes config and then cannot bring the server back leaves
+// the server reading the configuration it was started with.
+func TestAFailedApplyPutsTheOldConfigBack(t *testing.T) {
+	d := fake.New(healthy("a"))
+	d.SetClock(func() time.Time { return at })
+	d.SetFail("Create", errors.New("port 16261 already allocated"))
+	data := t.TempDir()
+
+	if err := os.MkdirAll(filepath.Join(data, "Server"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := filepath.Join(data, "Server", "servertest.ini")
+	if err := os.WriteFile(existing, []byte("MaxPlayers=8\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	game := compilingGame{files: []model.File{
+		{Path: "Server/servertest.ini", Mode: 0o644, Data: []byte("MaxPlayers=64\n")},
+		{Path: "Server/new.ini", Mode: 0o644, Data: []byte("fresh\n")},
+	}}
+	inst := model.Instance{Name: "a", Game: "zomboid", Data: data}
+	res := driverResolver{inst: inst, game: game}
+
+	p := runTask(t, d, res, tasks.ApplyConfig("t1", "a", tasks.TriggerManual, inst, &memSaver{}, true))
+	if p.State != tasks.StateRolledBack {
+		t.Fatalf("apply state = %v, want it rolled back", p.State)
+	}
+
+	got, err := os.ReadFile(existing)
+	if err != nil {
+		t.Fatalf("the previous config is gone: %v", err)
+	}
+	if string(got) != "MaxPlayers=8\n" {
+		t.Errorf("servertest.ini = %q, want the configuration the server was started with", got)
+	}
+	// A file the apply created has to go too, or the next diff compares
+	// against something nobody chose.
+	if _, err := os.Stat(filepath.Join(data, "Server", "new.ini")); err == nil {
+		t.Error("a config file the rolled-back apply created is still there")
+	}
+}
+
+// A volume keeps the world inside the runtime, where there is no path to
+// write to. Reporting a successful apply that wrote nothing is how somebody
+// spends an evening wondering why a setting does nothing.
+func TestApplyRefusesToWriteFilesToAVolume(t *testing.T) {
+	d := fake.New(healthy("a"))
+	d.SetClock(func() time.Time { return at })
+
+	game := compilingGame{files: []model.File{{Path: "Server/servertest.ini", Data: []byte("x\n")}}}
+	inst := model.Instance{Name: "a", Game: "zomboid", Volume: "a-world"}
+	res := driverResolver{inst: inst, game: game}
+
+	p := runTask(t, d, res, tasks.ApplyConfig("t1", "a", tasks.TriggerManual, inst, &memSaver{}, false))
+	if p.State == tasks.StateDone {
+		t.Fatal("the apply reported success without writing anything")
+	}
+	if !strings.Contains(p.Err, "volume") {
+		t.Errorf("error = %q, want it to say why there is nowhere to write", p.Err)
+	}
+}
+
+// A game configured entirely by environment compiles to nothing, and that is
+// the ordinary case rather than a failure — ADR 0006's whole point.
+func TestApplyWithNoCompiledFilesNeedsNoDataDirectory(t *testing.T) {
+	d := fake.New(healthy("a"))
+	d.SetClock(func() time.Time { return at })
+
+	inst := model.Instance{Name: "a", Game: "valheim", Volume: "a-world"}
+	res := driverResolver{inst: inst, game: valheimGame{}}
+
+	p := runTask(t, d, res, tasks.ApplyConfig("t1", "a", tasks.TriggerManual, inst, &memSaver{}, false))
 	if p.State != tasks.StateDone {
 		t.Fatalf("apply state = %v, history %v", p.State, p.History)
 	}

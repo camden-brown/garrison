@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -206,7 +207,7 @@ func Stop(id, server string, trigger Trigger) *Task {
 // The caller works out which from the game's Schema; this builds the sequence
 // for the answer.
 func ApplyConfig(id, server string, trigger Trigger, next model.Instance, save Saver, recreate bool) *Task {
-	steps := []Step{writeConfigStep(next, save), compileStep(), installModsStep()}
+	steps := []Step{writeConfigStep(next, save), compileStep(), writeFilesStep(), installModsStep()}
 	if recreate {
 		steps = append(steps, stopStep(), removeStep(), createStep(), startStep(), healthStep())
 	}
@@ -708,6 +709,122 @@ func compileStep() Step {
 			return nil
 		},
 	}
+}
+
+// writeFilesStep puts the compiled configuration on disk.
+//
+// Separate from the compile so a game whose Compile is wrong fails before
+// anything is touched, and so the task's history distinguishes "could not
+// work out what to write" from "could not write it".
+//
+// model.File paths are relative to the instance's data volume, which is what
+// lets a plugin compile without knowing where that volume is. Resolving them
+// is therefore this step's job, and a server whose world is on a Docker
+// volume has no path to resolve against — the same gap backups have.
+func writeFilesStep() Step {
+	return Step{
+		Name: "write config files",
+		Est:  time.Second,
+		Run: func(ctx context.Context, s *StepCtx) error {
+			files, ok := s.Values["files"].([]model.File)
+			if !ok || len(files) == 0 {
+				return nil
+			}
+			if s.Instance.Data == "" {
+				return fmt.Errorf("%s: writing %d config file(s) needs a host path, and this server's world is on a volume",
+					s.Instance.Name, len(files))
+			}
+
+			// What is there now, so the step can put it back. Read before
+			// anything is written, because a compile produces files that
+			// reference each other and half-old-half-new is a state no
+			// game parses.
+			previous := make([]model.File, 0, len(files))
+			var absent []string
+			for _, f := range files {
+				path := filepath.Join(s.Instance.Data, filepath.FromSlash(f.Path))
+				data, err := os.ReadFile(path)
+				switch {
+				case errors.Is(err, os.ErrNotExist):
+					absent = append(absent, f.Path)
+				case err != nil:
+					return fmt.Errorf("reading the current %s: %w", f.Path, err)
+				default:
+					previous = append(previous, model.File{Path: f.Path, Mode: f.Mode, Data: data})
+				}
+			}
+			s.Set("files-previous", previous)
+			s.Set("files-absent", absent)
+
+			for _, f := range files {
+				if err := writeFile(s.Instance.Data, f); err != nil {
+					return err
+				}
+			}
+			s.Say(fmt.Sprintf("wrote %d config file(s) under %s", len(files), s.Instance.Data))
+			return nil
+		},
+		Undo: func(ctx context.Context, s *StepCtx) error {
+			previous, _ := s.Values["files-previous"].([]model.File)
+			absent, _ := s.Values["files-absent"].([]string)
+
+			var first error
+			keep := func(err error) {
+				if err != nil && first == nil {
+					first = err
+				}
+			}
+			for _, f := range previous {
+				keep(writeFile(s.Instance.Data, f))
+			}
+			// A file this step created goes away again, or the next apply
+			// diffs against something nobody wrote.
+			for _, path := range absent {
+				err := os.Remove(filepath.Join(s.Instance.Data, filepath.FromSlash(path)))
+				if err != nil && !errors.Is(err, os.ErrNotExist) {
+					keep(err)
+				}
+			}
+			return first
+		},
+	}
+}
+
+// writeFile writes one compiled file under root, atomically.
+//
+// Atomically because the game may be running and reading: a server that boots
+// while a half-written servertest.ini is on disk parses the half.
+func writeFile(root string, f model.File) error {
+	path := filepath.Join(root, filepath.FromSlash(f.Path))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("creating the directory for %s: %w", f.Path, err)
+	}
+
+	mode := f.Mode
+	if mode == 0 {
+		mode = 0o644
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
+	if err != nil {
+		return fmt.Errorf("writing %s: %w", f.Path, err)
+	}
+	defer os.Remove(tmp.Name())
+
+	if _, err := tmp.Write(f.Data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("writing %s: %w", f.Path, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("writing %s: %w", f.Path, err)
+	}
+	if err := os.Chmod(tmp.Name(), mode); err != nil {
+		return fmt.Errorf("writing %s: %w", f.Path, err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return fmt.Errorf("replacing %s: %w", f.Path, err)
+	}
+	return nil
 }
 
 // installModsStep puts a server's mod files where the game will find them.
