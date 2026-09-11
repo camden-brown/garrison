@@ -1,0 +1,29 @@
+{
+ "namespace": "ValheimModding",
+ "name": "Jotunn",
+ "full_name": "ValheimModding-Jotunn",
+ "owner": "ValheimModding",
+ "package_url": "https://thunderstore.io/package/ValheimModding/Jotunn/",
+ "date_created": "2021-04-30T20:59:52.524322Z",
+ "date_updated": "2026-09-09T21:49:38.157564Z",
+ "rating_score": -1,
+ "is_pinned": false,
+ "is_deprecated": false,
+ "total_downloads": -1,
+ "latest": {
+  "namespace": "ValheimModding",
+  "name": "Jotunn",
+  "version_number": "2.30.0",
+  "full_name": "ValheimModding-Jotunn-2.30.0",
+  "description": "J\u00f6tunn (/\u02c8j\u0254\u02d0t\u028an/, 'giant'), the Valheim Library was created with the goal of making the lives of mod developers easier. It enables you to create mods for Valheim using an abstracted API so you can focus on the actual content creation.",
+  "icon": "https://gcdn.thunderstore.io/live/repository/icons/ValheimModding-Jotunn-2.30.0.png",
+  "dependencies": [
+   "denikson-BepInExPack_Valheim-5.4.2333"
+  ],
+  "download_url": "https://thunderstore.io/package/download/ValheimModding/Jotunn/2.30.0/",
+  "downloads": 62313,
+  "date_created": "2026-09-09T21:49:37.646168Z",
+  "website_url": "https://github.com/Valheim-Modding/Jotunn",
+  "is_active": true
+ }
+}

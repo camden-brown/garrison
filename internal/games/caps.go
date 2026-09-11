@@ -44,6 +44,30 @@ type Moddable interface {
 	LoadOrderMatters() bool
 }
 
+// Installable is a game whose mods are files Garrison has to put in place,
+// rather than ids a server resolves for itself.
+//
+// Moddable alone assumes the second shape: Zomboid is given Workshop ids and
+// downloads them, so Apply writes two config keys and the server does the
+// rest. Valheim's BepInEx plugins are DLLs in a directory and no amount of
+// configuration will make the server fetch one — which is the gap ADR 0006
+// declined to guess at and ADR 0012 closes now that a game needs it.
+//
+// A game implements this in addition to Moddable. Fetching and unpacking is
+// not here: a plugin's methods are pure, and this says only where the files
+// belong.
+type Installable interface {
+	// ModDir is where an installed mod's files go, relative to the
+	// instance's data volume — the same frame of reference as model.File,
+	// so a plugin never learns where that volume is mounted.
+	ModDir(inst model.Instance) string
+	// Bundled reports mods the server image installs itself, which Garrison
+	// must not install over. For Valheim that is the BepInEx pack: the
+	// image downloads and updates it, and a second copy underneath is how
+	// you get two loaders arguing about the same assembly.
+	Bundled() []string
+}
+
 // Backupable knows which paths are the save, and how to make a hot copy
 // consistent.
 type Backupable interface {

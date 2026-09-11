@@ -3,6 +3,7 @@ package tasks_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -576,6 +577,7 @@ func TestAFailedDeleteKeepsTheServerKnown(t *testing.T) {
 // Drainer satisfies the Resolver interface. A drain against a fake resolver
 // has no channel, which is the same degradation a game without one gets.
 func (driverResolver) Drainer(string) tasks.Drainer { return nil }
+func (driverResolver) Mods(string) tasks.ModSync    { return nil }
 
 // fakeDrain is a bound drain capability, which is how a step receives one:
 // cmd asserts games.Drainable and adapts, so this package never sees a game.
@@ -616,6 +618,7 @@ type drainResolver struct {
 }
 
 func (d drainResolver) Drainer(string) tasks.Drainer { return d.drain }
+func (d drainResolver) Mods(string) tasks.ModSync    { return nil }
 
 // A drain warns, waits, saves, and only then stops. The debt this closes has
 // been open since M0 and could not be closed before: Valheim has no channel
@@ -771,5 +774,130 @@ func TestRestoreRefusesAVolume(t *testing.T) {
 	}
 	if got := arch.restores(); len(got) != 0 {
 		t.Errorf("the archive was unpacked anyway: %v", got)
+	}
+}
+
+// modResolver hands the engine a bound mod sync.
+type modResolver struct {
+	driverResolver
+	sync tasks.ModSync
+}
+
+func (m modResolver) Mods(string) tasks.ModSync { return m.sync }
+
+// fakeSync records what an apply asked of it and whether the compensation ran.
+type fakeSync struct {
+	mu       sync.Mutex
+	synced   []string
+	undone   int
+	err      error
+	instance model.Instance
+}
+
+func (f *fakeSync) Sync(_ context.Context, inst model.Instance, log func(string)) (func(context.Context) error, error) {
+	f.mu.Lock()
+	f.instance = inst
+	for _, m := range inst.Mods {
+		f.synced = append(f.synced, m.ID)
+	}
+	err := f.err
+	f.mu.Unlock()
+
+	if log != nil {
+		log(fmt.Sprintf("installed %d mod(s)", len(inst.Mods)))
+	}
+	undo := func(context.Context) error {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.undone++
+		return nil
+	}
+	return undo, err
+}
+
+func (f *fakeSync) state() ([]string, int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.synced...), f.undone
+}
+
+// An apply installs the mods the configuration it just wrote asks for, not
+// the ones the old configuration had.
+func TestApplyInstallsTheModsItJustWrote(t *testing.T) {
+	d := fake.New(healthy("a"))
+	d.SetClock(func() time.Time { return at })
+	sync := &fakeSync{}
+	res := modResolver{
+		driverResolver: driverResolver{
+			inst: model.Instance{Name: "a", Game: "valheim", Data: "/data"},
+			game: valheimGame{},
+		},
+		sync: sync,
+	}
+
+	next := model.Instance{
+		Name: "a", Game: "valheim", Data: "/data",
+		Mods: []model.ModRef{{ID: "ValheimModding-Jotunn"}},
+	}
+	p := runTask(t, d, res, tasks.ApplyConfig("t1", "a", tasks.TriggerManual, next, &memSaver{}, false))
+
+	if p.State != tasks.StateDone {
+		t.Fatalf("apply state = %v, history %v", p.State, p.History)
+	}
+	synced, undone := sync.state()
+	if len(synced) != 1 || synced[0] != "ValheimModding-Jotunn" {
+		t.Errorf("synced %v, want the mod the new configuration lists", synced)
+	}
+	if undone != 0 {
+		t.Errorf("the install was undone %d times on a task that succeeded", undone)
+	}
+}
+
+// The rule for any step that changes a volume: an apply that installs mods
+// and then cannot bring the server back puts the mods back too.
+func TestAFailedApplyUndoesTheModInstall(t *testing.T) {
+	d := fake.New(healthy("a"))
+	d.SetClock(func() time.Time { return at })
+	// The recreate is what fails, which is the realistic case: the mods went
+	// in, and the container will not come up with them.
+	d.SetFail("Create", errors.New("port 2456 already allocated"))
+
+	sync := &fakeSync{}
+	res := modResolver{
+		driverResolver: driverResolver{
+			inst: model.Instance{Name: "a", Game: "valheim", Data: "/data"},
+			game: valheimGame{},
+		},
+		sync: sync,
+	}
+
+	next := model.Instance{
+		Name: "a", Game: "valheim", Data: "/data",
+		Mods: []model.ModRef{{ID: "ValheimModding-Jotunn"}},
+	}
+	p := runTask(t, d, res, tasks.ApplyConfig("t1", "a", tasks.TriggerManual, next, &memSaver{}, true))
+
+	if p.State != tasks.StateRolledBack {
+		t.Fatalf("apply state = %v, want it rolled back", p.State)
+	}
+	if _, undone := sync.state(); undone != 1 {
+		t.Errorf("the mod install was undone %d times, want once", undone)
+	}
+}
+
+// A game whose server downloads its own mods gets no sync, and that is not a
+// failure — it is most games.
+func TestAnApplyWithNoInstallerIsFine(t *testing.T) {
+	d := fake.New(healthy("a"))
+	d.SetClock(func() time.Time { return at })
+	res := driverResolver{
+		inst: model.Instance{Name: "a", Game: "valheim", Data: "/data"},
+		game: valheimGame{},
+	}
+
+	next := model.Instance{Name: "a", Game: "valheim", Data: "/data"}
+	p := runTask(t, d, res, tasks.ApplyConfig("t1", "a", tasks.TriggerManual, next, &memSaver{}, false))
+	if p.State != tasks.StateDone {
+		t.Fatalf("apply state = %v, history %v", p.State, p.History)
 	}
 }

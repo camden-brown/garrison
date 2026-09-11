@@ -119,6 +119,10 @@ type StepCtx struct {
 	// degrades to one that does not warn players and says so.
 	Drain Drainer
 
+	// Mods installs the mods the instance lists, and is nil for a game that
+	// has none or one whose server fetches its own.
+	Mods ModSync
+
 	// Values carries state between steps of one task — the snapshot a later
 	// step restores, the container id a create produced. It is a map rather
 	// than fields because the set differs per kind, and a struct with every

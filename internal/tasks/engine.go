@@ -44,6 +44,21 @@ type Resolver interface {
 	// to know both — asserts games.Drainable and adapts it to this. The
 	// arch test is what found that, which is the whole reason it exists.
 	Drainer(server string) Drainer
+
+	// Mods installs a server's mods, or nil for a game whose server fetches
+	// its own from ids in its config — and for one with no mods at all.
+	// Pre-bound for the same reason as Drainer: this package cannot see
+	// games.Installable, and cmd can.
+	Mods(server string) ModSync
+}
+
+// ModSync is the narrow capability an apply uses to put mod files in place.
+//
+// It returns its own compensation rather than being undone from outside: what
+// a sync displaced is known only to the thing that displaced it, and a step
+// that changes a volume has to declare how to take it back.
+type ModSync interface {
+	Sync(ctx context.Context, inst model.Instance, log func(string)) (undo func(context.Context) error, err error)
 }
 
 // Drainer is the narrow capability a drain uses.
@@ -259,6 +274,7 @@ func (e *Engine) execute(ctx context.Context, t *Task) Progress {
 		Instance: inst,
 		Game:     game,
 		Drain:    e.resolve.Drainer(t.Server),
+		Mods:     e.resolve.Mods(t.Server),
 		Values:   map[string]any{},
 	}
 	sc.Log = func(msg string) { p.History = append(p.History, msg) }

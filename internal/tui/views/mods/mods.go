@@ -56,10 +56,14 @@ var (
 	keyDown  = key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down"))
 	keyRaise = key.NewBinding(key.WithKeys("K", "shift+up"), key.WithHelp("K", "earlier"))
 	keyLower = key.NewBinding(key.WithKeys("J", "shift+down"), key.WithHelp("J", "later"))
+	// The same key as the settings form, because it is the same act: the
+	// configuration on disk is ahead of the server, and applying catches the
+	// server up. A mod list is settings that happen to be files.
+	keyApply = key.NewBinding(key.WithKeys("A"), key.WithHelp("A", "apply"))
 )
 
 func (v *View) Keys() []key.Binding {
-	return []key.Binding{keyUp, keyDown, keyRaise, keyLower}
+	return []key.Binding{keyUp, keyDown, keyRaise, keyLower, keyApply}
 }
 
 func (v *View) Update(msg tea.Msg, f tui.Frame, snap core.Snapshot) (tui.View, tea.Cmd) {
@@ -101,6 +105,14 @@ func (v *View) Update(msg tea.Msg, f tui.Frame, snap core.Snapshot) (tui.View, t
 		// cursor.
 		next.cursor = to
 		return &next, tui.ReorderMods(srv.Name, from, to)
+
+	case key.Matches(msgKey, keyApply):
+		// Always a recreate. For a game that fetches its own mods the ids
+		// have just been written into config the server reads at boot, and
+		// for one whose mods are files the loader only looks at them when it
+		// starts — either way nothing a running container has already read
+		// changes.
+		return &next, tui.Apply(srv.Name, true)
 	}
 
 	next.clamp(n)
@@ -275,9 +287,9 @@ func source(m games.Moddable) string {
 // act on should say so rather than leave you hunting for the key.
 func footer(m games.Moddable) string {
 	if m.LoadOrderMatters() {
-		return "K / J moves a mod earlier or later — the order is the load order, and applying it recreates the container."
+		return "K / J moves a mod earlier or later — the order is the load order. A applies, which recreates the container."
 	}
-	return "Order does not matter for this game. Add or remove mods in the server's TOML."
+	return "Mods come from the server's TOML. A installs them and recreates the container."
 }
 
 // Capturing is false: this view has no modal and no text field, so the

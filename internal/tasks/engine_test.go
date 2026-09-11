@@ -535,3 +535,4 @@ var _ host.Driver = (*fake.Driver)(nil)
 // Drainer satisfies the Resolver interface. A drain against a fake resolver
 // has no channel, which is the same degradation a game without one gets.
 func (stubResolver) Drainer(string) tasks.Drainer { return nil }
+func (stubResolver) Mods(string) tasks.ModSync    { return nil }

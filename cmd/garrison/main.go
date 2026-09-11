@@ -469,6 +469,86 @@ func (r resolver) Drainer(server string) tasks.Drainer {
 	return boundDrain{conn: c, game: drainable}
 }
 
+// Mods binds a game's mod layout to the directory that server's data lives
+// in, which is the pair the installer needs and neither half knows alone.
+//
+// Nil for a game whose server downloads its own mods from ids in its config —
+// Zomboid — and for a server with none configured. Both are the ordinary
+// case, and the apply's install step does nothing when it gets one.
+func (r resolver) Mods(server string) tasks.ModSync {
+	srv, ok := r.store.Snapshot().Server(server)
+	if !ok {
+		return nil
+	}
+	g, err := games.Get(srv.Game)
+	if err != nil {
+		return nil
+	}
+	installable, ok := g.(games.Installable)
+	if !ok {
+		return nil
+	}
+	moddable, ok := g.(games.Moddable)
+	if !ok {
+		// Installable without Moddable would be a game that says where mods
+		// go and nothing about where they come from.
+		return nil
+	}
+	return boundMods{game: installable, source: moddable.ModSource()}
+}
+
+// boundMods turns the game's answer about layout into a sync against a
+// directory, once the instance is known.
+//
+// The instance arrives at Sync rather than being captured here because an
+// apply can change where a server's data lives, and the mods belong to the
+// configuration being applied rather than the one being replaced.
+type boundMods struct {
+	game   games.Installable
+	source games.ModSource
+}
+
+func (b boundMods) Sync(ctx context.Context, inst model.Instance, log func(string)) (func(context.Context) error, error) {
+	dir := modDir(inst, b.game)
+	if dir == "" {
+		if len(inst.Mods) == 0 {
+			// Nowhere to install and nothing to install: a volume-backed
+			// server with no mods is not a problem to report.
+			return nil, nil
+		}
+		// The same gap backups have (debt 3). A volume keeps the world
+		// inside the runtime, where Garrison has no path to write to, so
+		// this refuses rather than reporting an install that wrote nothing.
+		return nil, fmt.Errorf("%s: installing mods needs a host path, and this server's world is on a volume", inst.Name)
+	}
+
+	source := modReleaser(b.source)
+	if source == nil {
+		return nil, fmt.Errorf("%s: Garrison has no resolver for %s packages", inst.Name, b.source)
+	}
+	return mods.Install{Dir: dir, Source: source, Skip: b.game.Bundled()}.Sync(ctx, inst.Mods, log)
+}
+
+// modDir is the absolute directory a server's mods are installed into, or
+// empty when there is no host path to write to.
+func modDir(inst model.Instance, g games.Installable) string {
+	if inst.Data == "" {
+		return ""
+	}
+	return filepath.Join(inst.Data, filepath.FromSlash(g.ModDir(inst)))
+}
+
+// modReleaser picks the source that can say what to download for a version.
+// One switch, in the one file allowed to know every game.
+func modReleaser(source games.ModSource) mods.Releaser {
+	switch source {
+	case games.ModSourceThunderstore:
+		return mods.Thunderstore{}
+	default:
+		return nil
+	}
+}
+
 // transport is the shared half of Drainer and the command runner: a live
 // connection for a server, or nil.
 func (r resolver) transport(server string) (*conn.Conn, games.Game) {
@@ -578,6 +658,17 @@ func (m modSources) For(server string) mods.Resolver {
 	switch moddable.ModSource() {
 	case games.ModSourceWorkshop:
 		return mods.Workshop{}
+	case games.ModSourceThunderstore:
+		// The installed half of an update badge is on disk, and only the
+		// installer can read it: Thunderstore knows what the newest version
+		// is and has no idea what this server is running.
+		ts := mods.Thunderstore{}
+		if installable, ok := g.(games.Installable); ok {
+			if dir := modDir(srv.Instance, installable); dir != "" {
+				ts.Installed = mods.Install{Dir: dir}.Installed
+			}
+		}
+		return ts
 	default:
 		// A source Garrison has no resolver for. The Mods screen shows the
 		// configured list unresolved, which is honest — nobody has looked.

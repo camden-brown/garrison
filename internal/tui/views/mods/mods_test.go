@@ -34,9 +34,7 @@ func TestMain(m *testing.M) {
 var now = time.Date(2026, 9, 9, 21, 7, 0, 0, time.UTC)
 
 // moddable is a game with a mod system, registered so the view has something
-// to assert against. Valheim implements no games.Moddable, which is the honest
-// state of it — so without this the screen could only ever be tested in its
-// degraded form.
+// to assert against without depending on a real plugin's answers.
 type moddable struct {
 	id      string
 	ordered bool
@@ -59,9 +57,23 @@ func (g moddable) Apply(model.Instance, []games.Mod) ([]model.File, error) {
 
 var _ games.Moddable = moddable{}
 
+// plain is a game with no mod system at all, which is what the degraded form
+// of the screen is for. It implements games.Game and nothing else, so the
+// assertion in the view finds exactly what a real plugin without mods offers.
+type plain struct{}
+
+func (plain) Meta() games.Meta {
+	return games.Meta{ID: "plain", Name: "Plainly", DefaultImage: "example/plain"}
+}
+func (plain) Plan(model.Instance) (model.Plan, error)      { return model.Plan{}, nil }
+func (plain) Compile(model.Instance) ([]model.File, error) { return nil, nil }
+func (plain) Schema() games.Schema                         { return games.Schema{} }
+func (plain) Parse(string) model.Event                     { return model.Event{} }
+
 func init() {
 	games.Register(moddable{id: "ordered", ordered: true, source: games.ModSourceWorkshop})
 	games.Register(moddable{id: "unordered", ordered: false, source: games.ModSourceThunderstore})
+	games.Register(plain{})
 }
 
 func snapshot(game string, refs ...model.ModRef) core.Snapshot {
@@ -86,11 +98,11 @@ func frame() tui.Frame {
 func TestAGameWithNoModSystemExplainsItself(t *testing.T) {
 	v := mods.New()
 
-	ok, why := v.Available(model.Instance{Name: "valheim-huldra", Game: "valheim"})
+	ok, why := v.Available(model.Instance{Name: "server-one", Game: "plain"})
 	if ok {
-		t.Fatal("Valheim implements no games.Moddable but the view offered a table")
+		t.Fatal("a game implementing no games.Moddable was offered a table")
 	}
-	if !strings.Contains(why, "Valheim") {
+	if !strings.Contains(why, "Plainly") {
 		t.Errorf("the refusal = %q, want it in the game's own terms", why)
 	}
 }

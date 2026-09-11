@@ -206,7 +206,7 @@ func Stop(id, server string, trigger Trigger) *Task {
 // The caller works out which from the game's Schema; this builds the sequence
 // for the answer.
 func ApplyConfig(id, server string, trigger Trigger, next model.Instance, save Saver, recreate bool) *Task {
-	steps := []Step{writeConfigStep(next, save), compileStep()}
+	steps := []Step{writeConfigStep(next, save), compileStep(), installModsStep()}
 	if recreate {
 		steps = append(steps, stopStep(), removeStep(), createStep(), startStep(), healthStep())
 	}
@@ -706,6 +706,45 @@ func compileStep() Step {
 			s.Say(fmt.Sprintf("%d config file(s) to write", len(files)))
 			s.Set("files", files)
 			return nil
+		},
+	}
+}
+
+// installModsStep puts a server's mod files where the game will find them.
+//
+// It runs before the container is touched, and that is safe because the
+// directory a mod is installed into is a staging one: for Valheim the image
+// copies it into the loader at boot, so writing it under a running server
+// changes nothing until the restart this task is already doing. A game where
+// that was untrue would want this after the stop, and would say so through
+// the capability rather than here.
+//
+// Nil Mods is the common case, not an error. Zomboid's server downloads its
+// own Workshop items from ids Compile just wrote, and a game with no mods has
+// nothing to do.
+func installModsStep() Step {
+	return Step{
+		Name: "install mods",
+		Est:  30 * time.Second,
+		Run: func(ctx context.Context, s *StepCtx) error {
+			if s.Mods == nil {
+				return nil
+			}
+			undo, err := s.Mods.Sync(ctx, s.Instance, s.Say)
+			// The undo is kept even when the sync failed: a failure
+			// partway through has already moved files, and that half is
+			// exactly what the compensation exists to put back.
+			if undo != nil {
+				s.Set("mods-undo", undo)
+			}
+			return err
+		},
+		Undo: func(ctx context.Context, s *StepCtx) error {
+			undo, ok := s.Values["mods-undo"].(func(context.Context) error)
+			if !ok || undo == nil {
+				return nil
+			}
+			return undo(ctx)
 		},
 	}
 }

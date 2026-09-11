@@ -3,4 +3,4 @@
 │ ▌      ValheimModding-Jotunn         2.19.0          Thunderstore                        │
 │        denikson-BepInExPack_Valheim  latest          Thunderstore                        │
 ╰──────────────────────────────────────────────────────────────────────────────────────────╯
-Order does not matter for this game. Add or remove mods in the server's TOML.
+Mods come from the server's TOML. A installs them and recreates the container.
