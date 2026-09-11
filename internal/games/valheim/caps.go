@@ -42,6 +42,20 @@ func (Game) Apply(model.Instance, []games.Mod) ([]model.File, error) { return ni
 // stopped.
 func (Game) ModDir(model.Instance) string { return "bepinex/plugins" }
 
+// ClientSteps is what a player has to do before they can join.
+//
+// The third step is the one that matters. Launching from Steam runs the game
+// unmodded, the mods here use ServerSync, and ServerSync refuses a client
+// whose versions do not match — so the symptom of skipping it is a connection
+// that fails for no visible reason.
+func (Game) ClientSteps() []string {
+	return []string{
+		"Install r2modman: https://thunderstore.io/package/ebkr/r2modman/",
+		"Make a Valheim profile in it and install the mods above, at those exact versions.",
+		"Launch Valheim from r2modman, not from Steam — Steam runs it unmodded and the server will refuse you.",
+	}
+}
+
 // Bundled is the BepInEx pack itself. The image downloads it from Thunderstore
 // on every update, so Garrison installing it as a mod would leave two copies
 // of the loader fighting over the same doorstop entry point.

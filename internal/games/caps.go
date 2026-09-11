@@ -66,6 +66,15 @@ type Installable interface {
 	// image downloads and updates it, and a second copy underneath is how
 	// you get two loaders arguing about the same assembly.
 	Bundled() []string
+	// ClientSteps is how a player installs these mods on their own machine,
+	// one line per step, for the text the "y" share puts on the clipboard.
+	//
+	// It is here because a game where the mods are files is exactly the
+	// game where every player has to install them too — the server cannot
+	// send them, and a version mismatch is refused at connect. Which steps
+	// those are is the plugin's knowledge: the shell must not learn that
+	// Valheim means BepInEx and r2modman.
+	ClientSteps() []string
 }
 
 // Backupable knows which paths are the save, and how to make a hot copy

@@ -541,7 +541,7 @@ func (a *App) View() string {
 		}
 	}
 	if a.sharing != "" {
-		body -= shareRows
+		body -= shareRows(a.sharing)
 		if body < 3 {
 			body = 3
 		}

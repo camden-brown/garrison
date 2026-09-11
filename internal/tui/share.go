@@ -9,6 +9,7 @@ import (
 
 	"github.com/camden-brown/garrison/internal/core"
 	"github.com/camden-brown/garrison/internal/games"
+	"github.com/camden-brown/garrison/internal/model"
 	"github.com/camden-brown/garrison/internal/tui/comp"
 )
 
@@ -58,7 +59,74 @@ func shareText(srv core.Server, now string) string {
 	}
 
 	fmt.Fprintf(&b, "Status: %s as of %s\n", srv.State.String(), now)
+
+	b.WriteString(modsText(srv))
 	return b.String()
+}
+
+// modsText is the half a player needs before they can connect at all.
+//
+// A server's mods are not a detail of the server, they are a prerequisite for
+// joining it: for a game whose mods are files the client must have the same
+// ones at the same versions, and the usual failure is a connection refused
+// with no explanation. So the share carries the list and the steps, and the
+// steps come from the game rather than from here.
+func modsText(srv core.Server) string {
+	mods := srv.Mods
+	if len(mods) == 0 {
+		// Nothing resolved yet — the poller may not have run. The configured
+		// ids are still worth pasting; a name is nicer than an id, but an id
+		// is what somebody types into a search box anyway.
+		for _, ref := range srv.Instance.Mods {
+			mods = append(mods, model.Mod{ID: ref.ID, Pin: ref.Pin})
+		}
+	}
+	if len(mods) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "\nMods (%d) — install these before joining:\n", len(mods))
+	for _, m := range mods {
+		line := "  " + m.ID
+		if v := installedVersion(m); v != "" {
+			line += " " + v
+		}
+		b.WriteString(line + "\n")
+	}
+
+	g, err := games.Get(srv.Game)
+	if err != nil {
+		return b.String()
+	}
+	installable, ok := g.(games.Installable)
+	if !ok {
+		// A game whose server hands its mods to the client — Zomboid
+		// subscribes them through Steam — needs no instructions, and
+		// inventing some would be the shell guessing on a plugin's behalf.
+		return b.String()
+	}
+	steps := installable.ClientSteps()
+	if len(steps) == 0 {
+		return b.String()
+	}
+
+	b.WriteString("\nHow to install:\n")
+	for i, step := range steps {
+		fmt.Fprintf(&b, "  %d. %s\n", i+1, step)
+	}
+	return b.String()
+}
+
+// installedVersion is the version a player has to match, which is the one the
+// server is running rather than the newest one published.
+func installedVersion(m model.Mod) string {
+	if m.Version != "" {
+		return m.Version
+	}
+	// A pin is what the configuration asked for, and before the first
+	// install it is all anybody knows.
+	return m.Pin
 }
 
 // joinAddress is what a player types, empty when nobody has said.
@@ -117,7 +185,11 @@ func (a *App) shareView(width int) string {
 	var b strings.Builder
 	for _, line := range strings.Split(strings.TrimRight(a.sharing, "\n"), "\n") {
 		label, rest, found := strings.Cut(line, ": ")
-		if !found {
+		// Only the header's "Label: value" lines are laid out in two
+		// columns. A step reading "Install r2modman: https://..." has a
+		// colon in it too, and putting a sentence in a ten-column label
+		// makes a mess of the one part somebody has to read carefully.
+		if !found || strings.ContainsAny(label, " \t") {
 			b.WriteString(t.Title.Render(comp.Truncate(line, comp.Inner(width))))
 			b.WriteString("\n")
 			continue
@@ -138,4 +210,17 @@ func (a *App) shareView(width int) string {
 }
 
 // shareRows is how much of the stage the panel takes.
-const shareRows = 9
+//
+// It grows with the text, because the mod list and its instructions are as
+// long as the server has mods — a fixed height would quietly cut off the
+// steps, which are the part a player actually needs.
+func shareRows(text string) int {
+	const chrome = 4 // panel border, title row, the hint line
+	rows := strings.Count(strings.TrimRight(text, "\n"), "\n") + 1 + chrome
+	if rows < minShareRows {
+		return minShareRows
+	}
+	return rows
+}
+
+const minShareRows = 9
