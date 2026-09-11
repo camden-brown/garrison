@@ -96,9 +96,27 @@ func (Game) Plan(inst model.Instance) (model.Plan, error) {
 		"RESTART_CRON": "",
 		"BACKUPS":      "false",
 	}
-	if pass := stringOr(inst, KeyPassword, ""); pass != "" {
-		env["SERVER_PASS"] = pass
-	}
+	// BepInEx follows from whether any mods are configured, rather than
+	// being a switch of its own. A loader with no plugins changes nothing
+	// but the startup path, and a plugin with no loader is a file the
+	// server never reads — so the two are one fact and a person cannot set
+	// them to disagree. Removing the last mod puts the server back on the
+	// vanilla binary, which is the same answer read the other way.
+	//
+	// It is set explicitly either way: the value is part of the plan hash,
+	// so the container is recreated when this flips.
+	env["BEPINEX"] = trueFalse(len(inst.Mods) > 0)
+
+	// Always set, even to empty. The image reads
+	// SERVER_PASS=${SERVER_PASS-secret} — the one-dash form, which fills in
+	// only for a variable that is *unset* — so omitting it for a server with
+	// no password would hand the server the image's own "secret" instead of
+	// no password at all. Setting it empty passes -password "" through, which
+	// is how the image's own disableServerPassword switch works.
+	//
+	// Valheim only accepts that on a server that is not publicly listed; a
+	// public one with no password is refused by the game, not by this.
+	env["SERVER_PASS"] = stringOr(inst, KeyPassword, "")
 	// World modifiers and -setkey flags are launch arguments, not
 	// environment, so they go through the one variable the image appends to
 	// the command line. Empty means the world keeps whatever it has.

@@ -80,10 +80,16 @@ func TestPlanFallsBackToDefaults(t *testing.T) {
 	if plan.Env["SERVER_NAME"] != "bare" {
 		t.Errorf("SERVER_NAME = %q, want the instance name", plan.Env["SERVER_NAME"])
 	}
-	// No password configured means the variable is absent rather than empty:
-	// an empty SERVER_PASS is a server that rejects every connection.
-	if _, present := plan.Env["SERVER_PASS"]; present {
-		t.Error("SERVER_PASS is set with no password configured")
+	// No password configured means SERVER_PASS present and empty, never
+	// absent. The image reads it as ${SERVER_PASS-secret}, so an absent
+	// variable is the image's own "secret" — a password nobody chose and
+	// nobody knows.
+	pass, present := plan.Env["SERVER_PASS"]
+	if !present {
+		t.Error("SERVER_PASS is absent, which the image would default to \"secret\"")
+	}
+	if pass != "" {
+		t.Errorf("SERVER_PASS = %q with no password configured, want empty", pass)
 	}
 }
 

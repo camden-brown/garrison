@@ -179,8 +179,10 @@ func (Game) Schema() games.Schema {
 			Group:   "Access",
 			Type:    games.TypeSecret,
 			Default: "",
-			Help: "At least five characters. Edit it in the server's TOML file — " +
-				"the form will not type a password into one.",
+			Help: "At least five characters, or empty for no password — which " +
+				"Valheim allows only while \"List publicly\" is off. Edit it in " +
+				"the server's TOML file; the form will not type a password " +
+				"into one.",
 			Impact: games.ImpactRecreate,
 		},
 		{
@@ -296,6 +298,15 @@ func boolString(inst model.Instance, key string, fallback bool) string {
 		return "1"
 	}
 	return "0"
+}
+
+// trueFalse is for the image's own switches, which it compares against the
+// words rather than the digits SERVER_PUBLIC uses.
+func trueFalse(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
