@@ -96,6 +96,17 @@ func (Game) Plan(inst model.Instance) (model.Plan, error) {
 		"RESTART_CRON": "",
 		"BACKUPS":      "false",
 	}
+	// Admins, only when somebody has said who they are.
+	//
+	// Empty is not the same as "nobody": the image rewrites
+	// /config/adminlist.txt from this variable when it is set and leaves the
+	// file alone when it is not, so an unset setting preserves a list
+	// somebody wrote by hand rather than quietly emptying it. Garrison owns
+	// this only once an operator has opted in by naming somebody.
+	if ids := adminIDs(inst); ids != "" {
+		env["ADMINLIST_IDS"] = ids
+	}
+
 	// BepInEx follows from whether any mods are configured, rather than
 	// being a switch of its own. A loader with no plugins changes nothing
 	// but the startup path, and a plugin with no loader is a file the

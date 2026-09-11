@@ -16,6 +16,7 @@ const (
 	KeyPassword   = "ServerPass"
 	KeyPublic     = "ServerPublic"
 	KeyCrossplay  = "Crossplay"
+	KeyAdmins     = "Admins"
 
 	// World modifiers. The key is the WorldModifiers enum member, because it
 	// is also the first argument to -modifier and having one spelling for
@@ -204,6 +205,18 @@ func (Game) Schema() games.Schema {
 				"connect. Steam players reach the server either way.",
 			Impact: games.ImpactRecreate,
 		},
+		{
+			Key:     KeyAdmins,
+			Label:   "Admins",
+			Group:   "Access",
+			Type:    games.TypeString,
+			Default: "",
+			Help: "Steam IDs, separated by spaces. An admin can use " +
+				"devcommands in game, which is the only way to unstick a " +
+				"character or fix what a player did. Leave empty to keep " +
+				"whatever adminlist.txt already says.",
+			Impact: games.ImpactRecreate,
+		},
 	}
 
 	for _, m := range modifiers {
@@ -298,6 +311,20 @@ func boolString(inst model.Instance, key string, fallback bool) string {
 		return "1"
 	}
 	return "0"
+}
+
+// adminIDs normalises the admin list into the space-separated form the image
+// splits on.
+//
+// Commas and newlines are accepted because a list of Steam IDs is something a
+// person pastes from somewhere else, and a comma between two of them should
+// not silently produce one admin whose id is both numbers joined together.
+func adminIDs(inst model.Instance) string {
+	raw := stringOr(inst, KeyAdmins, "")
+	fields := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || r == '\n' || r == '\r' || r == '\t' || r == ' '
+	})
+	return strings.Join(fields, " ")
 }
 
 // trueFalse is for the image's own switches, which it compares against the

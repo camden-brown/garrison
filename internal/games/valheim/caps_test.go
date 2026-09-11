@@ -160,3 +160,42 @@ func TestThePlanKeepsTheDownloadAndNothingElse(t *testing.T) {
 		t.Fatal("the world is marked as a cache, which is a delete that removes somebody's save")
 	}
 }
+
+// An admin is the only player who can run devcommands, which is the only way
+// to unstick a character or undo what somebody built. Without this the list
+// could only be written by hand, into a file the image rewrites.
+func TestAdminsReachTheImage(t *testing.T) {
+	inst := instance()
+	inst.Settings[KeyAdmins] = "76561198077609761 76561198006139107"
+
+	plan, err := (Game{}).Plan(inst)
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if got := plan.Env["ADMINLIST_IDS"]; got != "76561198077609761 76561198006139107" {
+		t.Errorf("ADMINLIST_IDS = %q, want both ids space-separated", got)
+	}
+}
+
+// A list is something somebody pastes from Discord, and a comma between two
+// ids must not produce one admin whose id is both numbers joined together.
+func TestAdminsAreSplitOnWhateverSeparatorWasPasted(t *testing.T) {
+	inst := instance()
+	inst.Settings[KeyAdmins] = "76561198077609761,76561198006139107 , 76561198000000000"
+
+	plan, _ := (Game{}).Plan(inst)
+	if got := plan.Env["ADMINLIST_IDS"]; got != "76561198077609761 76561198006139107 76561198000000000" {
+		t.Errorf("ADMINLIST_IDS = %q, want three ids separated by single spaces", got)
+	}
+}
+
+// Unset is not the same as nobody. The image rewrites adminlist.txt only when
+// the variable is set, so leaving it alone preserves a list written by hand —
+// and emptying it silently would take away the only admin on a server at the
+// moment somebody needed one.
+func TestNoAdminsLeavesTheListAlone(t *testing.T) {
+	plan, _ := (Game{}).Plan(instance())
+	if _, present := plan.Env["ADMINLIST_IDS"]; present {
+		t.Error("ADMINLIST_IDS is set with no admins configured, which rewrites the file")
+	}
+}
