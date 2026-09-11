@@ -1,6 +1,7 @@
 package valheim
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/camden-brown/garrison/internal/games"
@@ -77,5 +78,41 @@ func TestApplyDeclaresNothing(t *testing.T) {
 	}
 	if len(files) != 0 {
 		t.Errorf("Apply() wrote %d files, want none — no Valheim config names a mod", len(files))
+	}
+}
+
+// The bug this closes: the image syncs the staged plugins into the loader
+// only if the loader's plugins directory already exists, and on the boot that
+// installs the loader it does not. Every recreate therefore ran the server
+// with the mods staged and none loaded — "0 plugins to load", with the DLL
+// sitting correctly on disk a directory away.
+func TestAModdedServerSyncsItsPluginsBeforeItStarts(t *testing.T) {
+	inst := instance()
+	inst.Mods = []model.ModRef{{ID: "Azumatt-AzuExtendedPlayerInventory"}}
+
+	plan, err := (Game{}).Plan(inst)
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	hook := plan.Env["PRE_SERVER_RUN_HOOK"]
+	if hook == "" {
+		t.Fatal("no hook, so a freshly recreated container starts with no plugins loaded")
+	}
+	// Both halves have to be in it: where Garrison installed them, and
+	// where the loader reads them.
+	if !strings.Contains(hook, "/config/"+(Game{}).ModDir(inst)) {
+		t.Errorf("hook = %q, want it to read from where mods are installed", hook)
+	}
+	if !strings.Contains(hook, "/opt/valheim/bepinex/BepInEx/plugins") {
+		t.Errorf("hook = %q, want it to write where the loader reads", hook)
+	}
+}
+
+// An unmodded server gets no hook, so its plan — and therefore its container
+// — is exactly what it was before any of this existed.
+func TestAnUnmoddedServerGetsNoHook(t *testing.T) {
+	plan, _ := (Game{}).Plan(instance())
+	if got := plan.Env["PRE_SERVER_RUN_HOOK"]; got != "" {
+		t.Errorf("PRE_SERVER_RUN_HOOK = %q on a server with no mods, want none", got)
 	}
 }

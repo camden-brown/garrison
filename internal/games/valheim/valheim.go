@@ -106,6 +106,9 @@ func (Game) Plan(inst model.Instance) (model.Plan, error) {
 	// It is set explicitly either way: the value is part of the plan hash,
 	// so the container is recreated when this flips.
 	env["BEPINEX"] = trueFalse(len(inst.Mods) > 0)
+	if len(inst.Mods) > 0 {
+		env["PRE_SERVER_RUN_HOOK"] = syncPluginsHook(inst)
+	}
 
 	// Always set, even to empty. The image reads
 	// SERVER_PASS=${SERVER_PASS-secret} — the one-dash form, which fills in
@@ -142,6 +145,37 @@ func (Game) Plan(inst model.Instance) (model.Plan, error) {
 		// chunk file discovered weeks later.
 		StopGrace: 120 * time.Second,
 	}, nil
+}
+
+// containerConfig is where the image keeps everything that survives a
+// recreate, and where Mounts puts the instance's data.
+const containerConfig = "/config"
+
+// loaderPlugins is where the installed BepInEx reads plugins from. It is the
+// image's own bepinex_install_path (/usr/local/etc/valheim/common) plus
+// BepInEx's layout, and it lives in the container's image layer rather than
+// the volume — which is the whole reason the hook below exists.
+const loaderPlugins = "/opt/valheim/bepinex/BepInEx/plugins"
+
+// syncPluginsHook copies the staged mods into the loader immediately before
+// the server starts.
+//
+// The image already syncs that directory, but only when the loader's plugins
+// directory exists at the moment it looks — and on the boot that installs the
+// loader it does not, because BepInEx creates it when it first runs. Garrison
+// recreates the container on every apply, so the loader is installed fresh
+// every time and the sync is skipped every time: measured on a real apply,
+// the plugin was staged correctly, BepInEx started, and the server logged
+// "0 plugins to load".
+//
+// PRE_SERVER_RUN_HOOK is the image's own seam and it runs inside run_server,
+// after the download and the loader merge, one line before the server
+// process. --delete because the staging directory is the whole truth about
+// what should be loaded: without it a mod removed from the TOML would keep
+// running until something else recreated the container.
+func syncPluginsHook(inst model.Instance) string {
+	staged := containerConfig + "/" + Game{}.ModDir(inst)
+	return "mkdir -p " + loaderPlugins + " && rsync -a --delete " + staged + "/ " + loaderPlugins + "/"
 }
 
 // Compile returns no files.
