@@ -76,6 +76,27 @@ type Mount struct {
 
 	Container string
 	ReadOnly  bool
+
+	// Cache marks a mount whose contents the server can rebuild from
+	// somewhere else — a download the runtime would otherwise fetch again
+	// every time the container is recreated.
+	//
+	// It is the one kind of volume a delete may remove. A world is the
+	// thing Garrison exists to protect and is never removed with the
+	// server; a two-gigabyte copy of the game files is not worth keeping
+	// after the server that used them is gone.
+	Cache bool
+}
+
+// Caches are the mounts a delete may take with it.
+func Caches(mounts []Mount) []Mount {
+	var out []Mount
+	for _, m := range mounts {
+		if m.Cache && m.IsVolume() {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // Source is what the runtime should attach, whichever form this mount takes.

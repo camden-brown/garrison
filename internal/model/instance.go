@@ -55,6 +55,21 @@ type ModRef struct {
 	Pin string
 }
 
+// NamePrefix is what Garrison puts in front of the things it creates in the
+// runtime, so a container or a volume is recognisably ours in somebody else's
+// `docker ps`.
+const NamePrefix = "garrison-"
+
+// CacheVolume names a volume for data this instance can rebuild — a download
+// the runtime would otherwise fetch again on every recreate.
+//
+// Named after the instance so two servers of the same game never share one:
+// that would be two downloaders writing the same tree. The purpose is part of
+// the name because a game may want more than one.
+func (i Instance) CacheVolume(purpose string) string {
+	return NamePrefix + i.Name + "-" + purpose
+}
+
 // Schedule is a recurring task attached to an instance.
 type Schedule struct {
 	Kind   string        // a tasks.Kind

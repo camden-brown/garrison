@@ -253,6 +253,15 @@ func (d *Driver) Remove(ctx context.Context, id string, withVolumes bool) error 
 	return nil
 }
 
+// RemoveVolume removes a named volume, treating "already gone" as success.
+func (d *Driver) RemoveVolume(ctx context.Context, name string) error {
+	err := d.cli.VolumeRemove(ctx, name, false)
+	if err != nil && !client.IsErrNotFound(err) {
+		return fmt.Errorf("remove volume %s: %w", name, err)
+	}
+	return nil
+}
+
 // Stats decodes the engine's stats stream into samples until ctx is cancelled.
 //
 // The channel is unbuffered, so a stalled consumer applies backpressure all

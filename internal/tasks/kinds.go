@@ -34,7 +34,46 @@ type Saver interface {
 func Delete(id, server string, trigger Trigger, save Saver, inst model.Instance) *Task {
 	return &Task{
 		ID: id, Server: server, Kind: KindDelete, Trigger: trigger,
-		Steps: []Step{stopStep(), removeStep(), forgetStep(save, inst)},
+		Steps: []Step{stopStep(), removeStep(), dropCachesStep(), forgetStep(save, inst)},
+	}
+}
+
+// dropCachesStep removes the volumes holding data the server could rebuild.
+//
+// A deleted server leaves its world alone — that is the promise everywhere
+// else in this file — but a two-gigabyte copy of the game files it was
+// downloading into is not a world, and leaving one behind per deleted server
+// is how somebody finds a disk full of volumes nobody can name.
+//
+// Only mounts the plan marked Cache, so this cannot reach a world however a
+// game describes one. No compensation: the contents are by definition
+// rebuildable, and putting back a download by fetching it again is not a
+// rollback, it is the next start.
+func dropCachesStep() Step {
+	return Step{
+		Name: "remove download caches",
+		Est:  2 * time.Second,
+		Run: func(ctx context.Context, s *StepCtx) error {
+			if s.Game == nil {
+				return nil
+			}
+			plan, err := s.Game.Plan(s.Instance)
+			if err != nil {
+				// The server is being deleted and its container is already
+				// gone. A plugin that cannot describe it any more is not a
+				// reason to fail the delete; it is a reason to leave the
+				// volumes and say so.
+				s.Say("could not work out which volumes are caches: " + err.Error())
+				return nil
+			}
+			for _, m := range model.Caches(plan.Mounts) {
+				if err := s.Driver.RemoveVolume(ctx, m.Volume); err != nil {
+					return err
+				}
+				s.Say("removed the " + m.Volume + " cache")
+			}
+			return nil
+		},
 	}
 }
 

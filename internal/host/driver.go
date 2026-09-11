@@ -31,6 +31,15 @@ type Driver interface {
 	Stop(ctx context.Context, id string, signal string, grace time.Duration) error
 	Remove(ctx context.Context, id string, withVolumes bool) error
 
+	// RemoveVolume removes a named volume. A volume that does not exist is
+	// not an error: the caller is making sure it is gone, and a delete that
+	// fails because somebody already tidied up is a delete that leaves a
+	// server half-removed.
+	//
+	// Only ever called for a mount the plan marked Cache. A world lives on
+	// a volume too, and Garrison does not delete worlds.
+	RemoveVolume(ctx context.Context, name string) error
+
 	// Stats streams roughly one sample per second until ctx is cancelled.
 	// The channel is closed when the stream ends.
 	Stats(ctx context.Context, id string) (<-chan Sample, error)
@@ -81,7 +90,9 @@ const (
 
 // NamePrefix is prepended to an instance name to make a container name, so
 // `docker ps` is readable and Garrison's containers sort together.
-const NamePrefix = "garrison-"
+// It is model.NamePrefix: a plugin names the volumes it wants and must not
+// import host, so the one definition lives in the leaf package both can see.
+const NamePrefix = model.NamePrefix
 
 // ContainerName is the container Garrison creates for an instance.
 func ContainerName(instance string) string { return NamePrefix + instance }

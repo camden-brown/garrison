@@ -1024,3 +1024,58 @@ func TestApplyWithNoCompiledFilesNeedsNoDataDirectory(t *testing.T) {
 		t.Fatalf("apply state = %v, history %v", p.State, p.History)
 	}
 }
+
+// cachingGame wants a world volume and a download cache, which is the pair
+// that makes "delete removes volumes" a dangerous sentence.
+type cachingGame struct{ valheimGame }
+
+func (cachingGame) Plan(inst model.Instance) (model.Plan, error) {
+	return model.Plan{
+		Image: "example/game",
+		Mounts: []model.Mount{
+			{Volume: "the-world", Container: "/config"},
+			{Volume: inst.CacheVolume("dl"), Container: "/opt/game/dl", Cache: true},
+		},
+	}, nil
+}
+
+// A deleted server should not leave gigabytes of downloads behind — and must
+// not take the world with them. Both halves are the test.
+func TestDeleteRemovesTheCacheAndNeverTheWorld(t *testing.T) {
+	d := fake.New(healthy("a"))
+	d.SetClock(func() time.Time { return at })
+	inst := model.Instance{Name: "a", Game: "valheim", Volume: "the-world"}
+	res := driverResolver{inst: inst, game: cachingGame{}}
+
+	p := runTask(t, d, res, tasks.Delete("t1", "a", tasks.TriggerManual, &memSaver{}, inst))
+	if p.State != tasks.StateDone {
+		t.Fatalf("delete state = %v, history %v", p.State, p.History)
+	}
+
+	removed := d.VolumesRemoved()
+	if len(removed) != 1 || removed[0] != "garrison-a-dl" {
+		t.Fatalf("removed %v, want only the download cache", removed)
+	}
+	for _, name := range removed {
+		if name == "the-world" {
+			t.Fatal("the delete removed the world volume")
+		}
+	}
+}
+
+// A game with nothing rebuildable is the ordinary case, and the step is a
+// no-op rather than a failure.
+func TestDeleteWithNoCachesRemovesNoVolumes(t *testing.T) {
+	d := fake.New(healthy("a"))
+	d.SetClock(func() time.Time { return at })
+	inst := model.Instance{Name: "a", Game: "valheim", Data: "/data"}
+	res := driverResolver{inst: inst, game: valheimGame{}}
+
+	p := runTask(t, d, res, tasks.Delete("t1", "a", tasks.TriggerManual, &memSaver{}, inst))
+	if p.State != tasks.StateDone {
+		t.Fatalf("delete state = %v, history %v", p.State, p.History)
+	}
+	if got := d.VolumesRemoved(); len(got) != 0 {
+		t.Errorf("removed %v, want nothing", got)
+	}
+}

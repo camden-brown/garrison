@@ -116,3 +116,47 @@ func TestAnUnmoddedServerGetsNoHook(t *testing.T) {
 		t.Errorf("PRE_SERVER_RUN_HOOK = %q on a server with no mods, want none", got)
 	}
 }
+
+// Every recreate used to throw away ~6 GB and refetch 2 GB of it from Steam,
+// which made a one-line settings change a four-minute job. The download is
+// the only part kept: the install and the loader merge are still rebuilt, so
+// a recreate is still a real reset.
+func TestThePlanKeepsTheDownloadAndNothingElse(t *testing.T) {
+	plan, err := (Game{}).Plan(instance())
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+
+	var caches []model.Mount
+	for _, m := range plan.Mounts {
+		if m.Cache {
+			caches = append(caches, m)
+		}
+	}
+	if len(caches) != 1 {
+		t.Fatalf("%d cache mounts, want exactly the download", len(caches))
+	}
+	if caches[0].Container != "/opt/valheim/dl" {
+		t.Errorf("cache is %q, want the download directory — the installation must be rebuilt", caches[0].Container)
+	}
+	if !caches[0].IsVolume() {
+		t.Error("the cache is a host path; a bind mount from a Windows drive is ~32x slower for small files")
+	}
+	if caches[0].Volume != instance().CacheVolume("dl") {
+		t.Errorf("volume = %q, want one named for the instance", caches[0].Volume)
+	}
+
+	// And the world is still mounted, unmarked, where it always was.
+	var world model.Mount
+	for _, m := range plan.Mounts {
+		if m.Container == "/config" {
+			world = m
+		}
+	}
+	if world.Container == "" {
+		t.Fatal("the world is not mounted at all")
+	}
+	if world.Cache {
+		t.Fatal("the world is marked as a cache, which is a delete that removes somebody's save")
+	}
+}

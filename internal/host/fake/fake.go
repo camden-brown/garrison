@@ -36,6 +36,10 @@ type Driver struct {
 	order      []string // insertion order, so List is deterministic
 	calls      []string
 
+	// volumesRemoved is what a delete took with it, which a test asserts on
+	// because removing the wrong one is removing somebody's world.
+	volumesRemoved []string
+
 	// Everything below is behind the mutex and reached through setters
 	// rather than exported fields. A test that flips a field directly while
 	// a poller is mid-call races with it, and the race detector is the whole
@@ -330,6 +334,26 @@ func (d *Driver) Remove(ctx context.Context, id string, withVolumes bool) error 
 		}
 	}
 	return nil
+}
+
+// RemoveVolume records the removal so a test can assert which volumes a
+// delete took with it — which is the half that matters, since taking the
+// wrong one means deleting somebody's world.
+func (d *Driver) RemoveVolume(ctx context.Context, name string) error {
+	if err := d.record("RemoveVolume", name); err != nil {
+		return err
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.volumesRemoved = append(d.volumesRemoved, name)
+	return nil
+}
+
+// VolumesRemoved is every volume RemoveVolume was called for, in order.
+func (d *Driver) VolumesRemoved() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]string(nil), d.volumesRemoved...)
 }
 
 func (d *Driver) Stats(ctx context.Context, id string) (<-chan host.Sample, error) {

@@ -128,10 +128,29 @@ func (Game) Plan(inst model.Instance) (model.Plan, error) {
 	}
 
 	return model.Plan{
-		Image:  image,
-		Env:    env,
-		Ports:  ports,
-		Mounts: []model.Mount{inst.Storage("/config")},
+		Image: image,
+		Env:   env,
+		Ports: ports,
+		Mounts: []model.Mount{
+			inst.Storage("/config"),
+			// The download cache. Everything in /opt/valheim is in the
+			// container's own layer, so a recreate throws away ~6 GB and
+			// fetches 2 GB of it from Steam again — measured at about four
+			// minutes for a settings change that alters one line.
+			//
+			// Only the download is kept, not the installation: SteamCMD
+			// validates against the cache instead of refetching, while
+			// /opt/valheim/server and the BepInEx merge are still rebuilt
+			// from scratch on every recreate. That is what keeps "recreate
+			// the container" a real reset — a corrupt install is fixed by
+			// an apply rather than by hunting for a volume to delete — and
+			// it is how the plugins-never-synced bug was visible at all.
+			{
+				Volume:    inst.CacheVolume("dl"),
+				Container: "/opt/valheim/dl",
+				Cache:     true,
+			},
+		},
 		Resources: model.Resources{
 			Memory: inst.Resources.Memory,
 			CPUs:   inst.Resources.CPUs,
