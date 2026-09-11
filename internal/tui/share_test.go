@@ -94,3 +94,39 @@ func TestTheSharePanelGrowsWithTheText(t *testing.T) {
 		t.Errorf("panel is %d rows, want at least %d", short, minShareRows)
 	}
 }
+
+// A profile code installs every mod at the version the operator exported,
+// which is the version the server runs. It replaces the step where somebody
+// searches for mods by hand and picks whatever is newest.
+func TestAProfileCodeChangesTheInstructions(t *testing.T) {
+	srv := server("valheim", []model.Mod{{ID: "Azumatt-AzuCraftyBoxes", Version: "1.8.15"}})
+	srv.Instance.ModProfile = "01a090b4-df0d-416a-7b88-5ee035d3bab8"
+
+	text := shareText(srv, "08:30")
+	if !strings.Contains(text, "01a090b4-df0d-416a-7b88-5ee035d3bab8") {
+		t.Errorf("the code is missing from the share:\n%s", text)
+	}
+	if !strings.Contains(text, "Import") {
+		t.Errorf("the share does not say what to do with the code:\n%s", text)
+	}
+	if strings.Contains(text, "install the mods above, at those exact versions") {
+		t.Errorf("the share still tells players to install by hand:\n%s", text)
+	}
+	// The list stays: somebody has to be able to check what they ended up
+	// with, and a code is opaque.
+	if !strings.Contains(text, "Azumatt-AzuCraftyBoxes 1.8.15") {
+		t.Errorf("the mod list vanished when a code was set:\n%s", text)
+	}
+}
+
+// Without a code the manual steps are what is left, and they have to still be
+// there.
+func TestWithoutACodeThePlayerIsToldToInstallByHand(t *testing.T) {
+	text := shareText(server("valheim", []model.Mod{{ID: "Some-Mod", Version: "1.0.0"}}), "08:30")
+	if strings.Contains(text, "Mod profile code") {
+		t.Errorf("a code appeared from nowhere:\n%s", text)
+	}
+	if !strings.Contains(text, "install the mods above") {
+		t.Errorf("no instructions for a server without a code:\n%s", text)
+	}
+}

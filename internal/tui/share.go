@@ -95,6 +95,10 @@ func modsText(srv core.Server) string {
 		b.WriteString(line + "\n")
 	}
 
+	if code := srv.Instance.ModProfile; code != "" {
+		fmt.Fprintf(&b, "\nMod profile code: %s\n", code)
+	}
+
 	g, err := games.Get(srv.Game)
 	if err != nil {
 		return b.String()
@@ -106,7 +110,7 @@ func modsText(srv core.Server) string {
 		// inventing some would be the shell guessing on a plugin's behalf.
 		return b.String()
 	}
-	steps := installable.ClientSteps()
+	steps := installable.ClientSteps(srv.Instance.ModProfile)
 	if len(steps) == 0 {
 		return b.String()
 	}

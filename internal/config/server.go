@@ -35,6 +35,8 @@ type Server struct {
 	Data    string `toml:"data,omitempty"`
 	Volume  string `toml:"volume,omitempty"`
 	Address string `toml:"address,omitempty"`
+	// ModProfile is the mod manager profile code players import.
+	ModProfile string `toml:"mod_profile,omitempty"`
 
 	Resources Resources      `toml:"resources,omitempty"`
 	Ports     []Port         `toml:"ports,omitempty"`
@@ -185,14 +187,15 @@ func (raw Server) instance(name string) (model.Instance, error) {
 	}
 
 	inst := model.Instance{
-		Name:      name,
-		Game:      raw.Game,
-		Image:     raw.Image,
-		Data:      raw.Data,
-		Volume:    raw.Volume,
-		Address:   raw.Address,
-		Resources: model.Resources{Memory: memory, CPUs: raw.Resources.CPUs},
-		Settings:  raw.Settings,
+		Name:       name,
+		Game:       raw.Game,
+		Image:      raw.Image,
+		Data:       raw.Data,
+		Volume:     raw.Volume,
+		Address:    raw.Address,
+		ModProfile: raw.ModProfile,
+		Resources:  model.Resources{Memory: memory, CPUs: raw.Resources.CPUs},
+		Settings:   raw.Settings,
 	}
 	if inst.Settings == nil {
 		inst.Settings = map[string]any{}
@@ -218,13 +221,14 @@ func (raw Server) instance(name string) (model.Instance, error) {
 
 func fromInstance(inst model.Instance) Server {
 	raw := Server{
-		Game:      inst.Game,
-		Image:     inst.Image,
-		Data:      inst.Data,
-		Volume:    inst.Volume,
-		Address:   inst.Address,
-		Resources: Resources{Memory: FormatBytes(inst.Resources.Memory), CPUs: inst.Resources.CPUs},
-		Settings:  inst.Settings,
+		Game:       inst.Game,
+		Image:      inst.Image,
+		Data:       inst.Data,
+		Volume:     inst.Volume,
+		Address:    inst.Address,
+		ModProfile: inst.ModProfile,
+		Resources:  Resources{Memory: FormatBytes(inst.Resources.Memory), CPUs: inst.Resources.CPUs},
+		Settings:   inst.Settings,
 	}
 	for _, p := range inst.Ports {
 		raw.Ports = append(raw.Ports, Port{Container: p.Container, Host: p.Host})

@@ -44,16 +44,26 @@ func (Game) ModDir(model.Instance) string { return "bepinex/plugins" }
 
 // ClientSteps is what a player has to do before they can join.
 //
-// The third step is the one that matters. Launching from Steam runs the game
+// The last step is the one that matters. Launching from Steam runs the game
 // unmodded, the mods here use ServerSync, and ServerSync refuses a client
 // whose versions do not match — so the symptom of skipping it is a connection
 // that fails for no visible reason.
-func (Game) ClientSteps() []string {
-	return []string{
-		"Install r2modman: https://thunderstore.io/package/ebkr/r2modman/",
-		"Make a Valheim profile in it and install the mods above, at those exact versions.",
-		"Launch Valheim from r2modman, not from Steam — Steam runs it unmodded and the server will refuse you.",
+//
+// A profile code replaces the middle step rather than adding to it: importing
+// one installs every mod at the version the operator exported, which is the
+// version the server is running. Searching for mods by hand is what people do
+// when nobody gave them a code, and it is where the versions drift apart.
+func (Game) ClientSteps(profile string) []string {
+	steps := []string{"Install r2modman: https://thunderstore.io/package/ebkr/r2modman/"}
+	if profile != "" {
+		steps = append(steps,
+			"In r2modman: Valheim → Import/Update profile → Import from code, and paste the code above.")
+	} else {
+		steps = append(steps,
+			"Make a Valheim profile in it and install the mods above, at those exact versions.")
 	}
+	return append(steps,
+		"Launch Valheim from r2modman, not from Steam — Steam runs it unmodded and the server will refuse you.")
 }
 
 // Bundled is the BepInEx pack itself. The image downloads it from Thunderstore

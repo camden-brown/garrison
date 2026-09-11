@@ -74,7 +74,11 @@ type Installable interface {
 	// send them, and a version mismatch is refused at connect. Which steps
 	// those are is the plugin's knowledge: the shell must not learn that
 	// Valheim means BepInEx and r2modman.
-	ClientSteps() []string
+	//
+	// profile is the instance's ModProfile, empty when the operator has not
+	// published one. A game that knows what to do with a code says so and
+	// the steps get shorter; one that does not can ignore it.
+	ClientSteps(profile string) []string
 }
 
 // Backupable knows which paths are the save, and how to make a hot copy

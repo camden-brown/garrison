@@ -29,6 +29,17 @@ type Instance struct {
 	// work for anyone outside the house.
 	Address string
 
+	// ModProfile is a code players import to get exactly this server's mods
+	// at exactly its versions — an r2modman profile code for a game whose
+	// mods are files.
+	//
+	// Garrison cannot produce one: the code is minted by the mod manager
+	// when somebody exports a profile, and lives on that service. Like
+	// Address, it is a fact about the world outside the container that only
+	// the operator can supply, which is why it is configuration rather than
+	// something derived.
+	ModProfile string
+
 	Resources Resources
 	Ports     []PortMap
 	Settings  map[string]any // keys are the game's own; validated against its Schema
