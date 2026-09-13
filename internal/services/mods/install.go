@@ -31,9 +31,43 @@ const manifestName = ".garrison-mods.json"
 // stashName holds what a sync displaced, so the step that ran it can be
 // undone.
 //
-// It is a sibling of the mod directory rather than a child, because anything
-// inside the mod directory is a file the game will try to load.
+// It sits at the root of the instance's data rather than inside any mod
+// directory, because anything inside one of those is a file the game will try
+// to load.
 const stashName = ".garrison-mods-prev"
+
+// Layout is where each kind of content in a package belongs, relative to the
+// instance's data. It mirrors games.ModLayout, which is where the answer
+// comes from; this package cannot import games.
+type Layout struct {
+	Plugins  string
+	Patchers string
+	Config   string
+}
+
+// dirFor returns the destination for a kind of content, and whether this game
+// has one at all.
+func (l Layout) dirFor(k kind) (string, bool) {
+	switch k {
+	case kindPlugin:
+		return l.Plugins, l.Plugins != ""
+	case kindPatcher:
+		return l.Patchers, l.Patchers != ""
+	case kindConfig:
+		return l.Config, l.Config != ""
+	}
+	return "", false
+}
+
+// kind is what a file inside a package is.
+type kind uint8
+
+const (
+	kindSkip kind = iota
+	kindPlugin
+	kindPatcher
+	kindConfig
+)
 
 // Releaser resolves a ref to the version that should be installed. Thunderstore
 // implements it.
@@ -49,8 +83,11 @@ type Releaser interface {
 // resolves it against the instance's data, which is the same split the rest
 // of the capability interfaces use.
 type Install struct {
-	// Dir is the absolute path of the directory mods are installed into.
-	Dir string
+	// Root is the absolute path of the instance's data directory. Every
+	// destination in Layout is relative to it.
+	Root string
+	// Layout is where the parts of a package go.
+	Layout Layout
 	// Source resolves ids to downloads.
 	Source Releaser
 	// HTTP fetches the packages. Nil means a default with a generous
@@ -63,14 +100,33 @@ type Install struct {
 
 // entry is one installed mod as the manifest records it.
 type entry struct {
-	Version   string    `json:"version"`
-	Bytes     int64     `json:"bytes"`
-	Files     []string  `json:"files"`
+	Version string `json:"version"`
+	Bytes   int64  `json:"bytes"`
+	// Dirs is every directory this mod occupies, relative to the instance's
+	// data and slash-separated. A package can land in more than one — a
+	// plugin and a patcher are read from different places — and pruning has
+	// to know all of them or it leaves half a mod behind.
+	Dirs      []string  `json:"dirs"`
 	Installed time.Time `json:"installed"`
 }
 
 type manifest struct {
 	Mods map[string]entry `json:"mods"`
+}
+
+// pluginsDir is where plugins go, and where the manifest lives beside them.
+func (i Install) pluginsDir() string {
+	return filepath.Join(i.Root, filepath.FromSlash(i.Layout.Plugins))
+}
+
+// dirsFor is every directory a package with this content would occupy,
+// relative to Root and in slash form, which is how the manifest records them.
+func (i Install) dirFor(k kind, id string) (string, bool) {
+	dir, ok := i.Layout.dirFor(k)
+	if !ok {
+		return "", false
+	}
+	return dir + "/" + id, true
 }
 
 // Installed reports what is on disk for one id, for the resolver to fill in.
@@ -97,14 +153,14 @@ func (i Install) Sync(ctx context.Context, refs []model.ModRef, log func(string)
 	if log == nil {
 		log = func(string) {}
 	}
-	if i.Dir == "" {
+	if i.Root == "" || i.Layout.Plugins == "" {
 		return nil, errors.New("no directory to install mods into")
 	}
 	if i.Source == nil {
 		return nil, errors.New("no source to resolve mods against")
 	}
-	if err := os.MkdirAll(i.Dir, 0o755); err != nil {
-		return nil, fmt.Errorf("creating %s: %w", i.Dir, err)
+	if err := os.MkdirAll(i.pluginsDir(), 0o755); err != nil {
+		return nil, fmt.Errorf("creating %s: %w", i.pluginsDir(), err)
 	}
 
 	before, err := i.read()
@@ -117,12 +173,12 @@ func (i Install) Sync(ctx context.Context, refs []model.ModRef, log func(string)
 	// way out is what keeps one recoverable copy around after a successful
 	// apply, which is the copy somebody wants when a mod update breaks their
 	// world.
-	stash := filepath.Join(filepath.Dir(i.Dir), stashName)
+	stash := filepath.Join(i.Root, stashName)
 	if err := os.RemoveAll(stash); err != nil {
 		return nil, fmt.Errorf("clearing %s: %w", stash, err)
 	}
 
-	u := &undoer{dir: i.Dir, stash: stash, before: before}
+	u := &undoer{root: i.Root, stash: stash, manifestDir: i.pluginsDir(), before: before}
 	after := manifest{Mods: map[string]entry{}}
 
 	wanted := map[string]bool{}
@@ -142,32 +198,32 @@ func (i Install) Sync(ctx context.Context, refs []model.ModRef, log func(string)
 			return u.undo, err
 		}
 
-		if have, ok := before.Mods[id]; ok && have.Version == rel.Version && i.present(id) {
+		if have, ok := before.Mods[id]; ok && have.Version == rel.Version && i.present(have) {
 			log(fmt.Sprintf("%s %s is up to date", id, have.Version))
 			after.Mods[id] = have
 			continue
 		}
 
-		if err := u.displace(id); err != nil {
+		if err := u.displace(dirsOf(before.Mods[id], i, id)); err != nil {
 			return u.undo, err
 		}
 		log(fmt.Sprintf("installing %s %s", id, rel.Version))
-		written, bytes, err := i.fetch(ctx, rel, filepath.Join(i.Dir, id))
+		dirs, bytes, err := i.fetch(ctx, rel, id)
 		if err != nil {
 			return u.undo, err
 		}
-		u.added(id)
-		after.Mods[id] = entry{Version: rel.Version, Bytes: bytes, Files: written, Installed: time.Now().UTC()}
+		u.added(dirs)
+		after.Mods[id] = entry{Version: rel.Version, Bytes: bytes, Dirs: dirs, Installed: time.Now().UTC()}
 	}
 
 	// Anything Garrison installed and nobody asked for any more. Only what
 	// the manifest claims, which is why a hand-dropped plugin is safe here.
-	for id := range before.Mods {
+	for id, was := range before.Mods {
 		if wanted[id] {
 			continue
 		}
 		log("removing " + id + ", which is no longer configured")
-		if err := u.displace(id); err != nil {
+		if err := u.displace(dirsOf(was, i, id)); err != nil {
 			return u.undo, err
 		}
 	}
@@ -187,13 +243,52 @@ func (i Install) skipped(id string) bool {
 	return false
 }
 
-func (i Install) present(id string) bool {
-	info, err := os.Stat(filepath.Join(i.Dir, id))
-	return err == nil && info.IsDir()
+// present reports whether what the manifest claims is still on disk. A
+// directory somebody deleted by hand is a mod to reinstall, not one to skip
+// as current.
+func (i Install) present(e entry) bool {
+	if len(e.Dirs) == 0 {
+		return false
+	}
+	for _, d := range e.Dirs {
+		info, err := os.Stat(filepath.Join(i.Root, filepath.FromSlash(d)))
+		if err != nil || !info.IsDir() {
+			return false
+		}
+	}
+	return true
 }
 
-// fetch downloads one release and unpacks it into dst.
-func (i Install) fetch(ctx context.Context, rel Release, dst string) ([]string, int64, error) {
+// configOrDir resolves the destination for one kind of content. Config goes
+// to the layout's config directory itself; everything else to a directory
+// named after the mod, so pruning is exact.
+func (i Install) configOrDir(k kind, id string) (string, bool) {
+	if k == kindConfig {
+		return i.Layout.dirFor(k)
+	}
+	return i.dirFor(k, id)
+}
+
+// dirsOf is where a mod's files are: what the manifest recorded, or — for an
+// entry written before directories were recorded, and for a mod being
+// installed for the first time — every directory this layout could have put
+// them in.
+func dirsOf(e entry, i Install, id string) []string {
+	if len(e.Dirs) > 0 {
+		return e.Dirs
+	}
+	var out []string
+	for _, k := range []kind{kindPlugin, kindPatcher} {
+		if dir, ok := i.dirFor(k, id); ok {
+			out = append(out, dir)
+		}
+	}
+	return out
+}
+
+// fetch downloads one release and unpacks it into the directories its
+// contents belong in, returning those directories relative to Root.
+func (i Install) fetch(ctx context.Context, rel Release, id string) ([]string, int64, error) {
 	client := i.HTTP
 	if client == nil {
 		client = &http.Client{Timeout: 5 * time.Minute}
@@ -230,69 +325,105 @@ func (i Install) fetch(ctx context.Context, rel Release, dst string) ([]string, 
 	if err != nil {
 		return nil, 0, fmt.Errorf("%s did not download a readable zip: %w", rel.ID, err)
 	}
-	return unpack(zr, dst)
+	return i.unpack(zr, id)
 }
 
-// unpack writes the parts of a package that belong in a plugins directory.
+// unpack writes the parts of a package into the directories they belong in.
 //
 // Thunderstore packages are a shallow convention rather than a format: the
 // content is usually under plugins/, sometimes under BepInEx/plugins/, and
-// occasionally a bare DLL at the root. All three land in the same place here,
-// which is what makes an id enough for a person to type.
-func unpack(zr *zip.Reader, dst string) ([]string, int64, error) {
+// occasionally a bare DLL at the root. Patchers are their own kind and their
+// own directory — HookGenPatcher ships nothing else — and a package can carry
+// both, which is why this returns a set of directories rather than one.
+func (i Install) unpack(zr *zip.Reader, id string) ([]string, int64, error) {
 	var (
-		written []string
-		total   int64
+		total int64
+		used  = map[string]bool{}
+		wrote bool
 	)
 	for _, f := range zr.File {
 		if escapes(f.Name) {
 			// Refused rather than skipped: a package that names a path
 			// outside itself is not one to half-install and call done.
-			return written, total, fmt.Errorf("%s contains a path that escapes the mod directory: %q",
-				filepath.Base(dst), f.Name)
+			return dirList(used), total, fmt.Errorf("%s contains a path that escapes the mod directory: %q", id, f.Name)
 		}
-		rel, ok := destination(f.Name)
-		if !ok {
+		k, rel := classify(f.Name)
+		if k == kindSkip {
 			continue
 		}
-		out := filepath.Join(dst, filepath.FromSlash(rel))
+		// Config is the one kind that is not filed under the mod's own
+		// directory: BepInEx names config files after the plugin's GUID and
+		// reads them from one flat directory, which is also where the
+		// operator's edits live.
+		dir, ok := i.configOrDir(k, id)
+		if !ok {
+			// A package carrying something this game has nowhere to put. A
+			// patcher installed among the plugins is a file nothing reads,
+			// so this refuses rather than pretending.
+			return dirList(used), total, fmt.Errorf("%s carries files this game has nowhere to install: %q", id, f.Name)
+		}
+		if k != kindConfig {
+			used[dir] = true
+		}
+
+		root := filepath.Join(i.Root, filepath.FromSlash(dir))
+		out := filepath.Join(root, filepath.FromSlash(rel))
 
 		// Zip entries are attacker-controlled names. Anything that escapes
 		// the destination is refused rather than sanitised, because a
 		// package that contains one is not a package to half-install.
-		if !within(dst, out) {
-			return written, total, fmt.Errorf("%s contains a path that escapes the mod directory: %q", filepath.Base(dst), f.Name)
+		if !within(root, out) {
+			return dirList(used), total, fmt.Errorf("%s contains a path that escapes the mod directory: %q", id, f.Name)
 		}
 		if f.FileInfo().IsDir() {
 			continue
 		}
+		if k == kindConfig {
+			// Never over an existing one. The file on disk is the
+			// operator's, whatever wrote it first, and an update that
+			// silently restored the author's defaults would undo an
+			// afternoon of tuning without saying so.
+			if _, err := os.Stat(out); err == nil {
+				continue
+			}
+		}
 		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
-			return written, total, err
+			return dirList(used), total, err
 		}
 
 		src, err := f.Open()
 		if err != nil {
-			return written, total, err
+			return dirList(used), total, err
 		}
 		dstFile, err := os.OpenFile(out, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
 		if err != nil {
 			src.Close()
-			return written, total, err
+			return dirList(used), total, err
 		}
 		n, err := io.Copy(dstFile, src)
 		src.Close()
 		dstFile.Close()
 		if err != nil {
-			return written, total, err
+			return dirList(used), total, err
 		}
-		written = append(written, rel)
+		wrote = true
 		total += n
 	}
-	if len(written) == 0 {
-		return nil, 0, errors.New("the package held no plugin files")
+	if !wrote && len(used) == 0 {
+		return nil, 0, errors.New("the package held no files this game can load")
 	}
-	sort.Strings(written)
-	return written, total, nil
+	return dirList(used), total, nil
+}
+
+// dirList is the set of directories a package occupied, in a stable order so
+// the manifest does not churn between syncs that changed nothing.
+func dirList(used map[string]bool) []string {
+	out := make([]string, 0, len(used))
+	for dir := range used {
+		out = append(out, dir)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // packaging is what Thunderstore requires in every package and what no game
@@ -313,29 +444,38 @@ func escapes(name string) bool {
 	return clean == ".." || strings.HasPrefix(clean, "../") || path.IsAbs(clean)
 }
 
-// destination maps a zip entry to its path inside the mod's directory, or
-// reports that it is not content.
-func destination(name string) (string, bool) {
+// classify says what a zip entry is and where inside its directory it goes.
+func classify(name string) (kind, string) {
 	clean := path.Clean(strings.ReplaceAll(name, "\\", "/"))
 	if clean == "." || strings.HasPrefix(clean, "../") {
-		return "", false
+		return kindSkip, ""
 	}
 	lower := strings.ToLower(clean)
 
 	switch {
 	case strings.HasPrefix(lower, "bepinex/plugins/"):
-		return clean[len("BepInEx/plugins/"):], true
+		return kindPlugin, clean[len("BepInEx/plugins/"):]
 	case strings.HasPrefix(lower, "plugins/"):
-		return clean[len("plugins/"):], true
+		return kindPlugin, clean[len("plugins/"):]
+	case strings.HasPrefix(lower, "bepinex/patchers/"):
+		return kindPatcher, clean[len("BepInEx/patchers/"):]
+	case strings.HasPrefix(lower, "patchers/"):
+		return kindPatcher, clean[len("patchers/"):]
+	case strings.HasPrefix(lower, "bepinex/config/"):
+		return kindConfig, clean[len("BepInEx/config/"):]
+	case strings.HasPrefix(lower, "config/"):
+		return kindConfig, clean[len("config/"):]
 	case strings.HasPrefix(lower, "bepinex/"):
-		// patchers, core, config and the rest. A server-side install that
-		// wrote these would be overwriting the loader the image manages and
-		// the configuration the operator edits.
-		return "", false
+		// The loader's own files. Writing these would overwrite what the
+		// image manages, on every update.
+		return kindSkip, ""
 	case !strings.Contains(clean, "/") && packaging[lower]:
-		return "", false
+		return kindSkip, ""
 	default:
-		return clean, true
+		// A bare DLL at the root, or the translation files that sit beside
+		// one. Plugins by convention, and the convention is what the mod
+		// managers implement.
+		return kindPlugin, clean
 	}
 }
 
@@ -360,7 +500,7 @@ func canonical(id string) string {
 
 func (i Install) read() (manifest, error) {
 	out := manifest{Mods: map[string]entry{}}
-	data, err := os.ReadFile(filepath.Join(i.Dir, manifestName))
+	data, err := os.ReadFile(filepath.Join(i.pluginsDir(), manifestName))
 	if errors.Is(err, os.ErrNotExist) {
 		return out, nil
 	}
@@ -380,12 +520,14 @@ func (i Install) read() (manifest, error) {
 	return out, nil
 }
 
-func (i Install) write(m manifest) error {
+func (i Install) write(m manifest) error { return writeManifest(i.pluginsDir(), m) }
+
+func writeManifest(dir string, m manifest) error {
 	data, err := json.MarshalIndent(m, "", " ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(i.Dir, manifestName), append(data, '\n'), 0o644)
+	return os.WriteFile(filepath.Join(dir, manifestName), append(data, '\n'), 0o644)
 }
 
 // undoer records what a sync displaced so it can be put back.
@@ -395,29 +537,37 @@ func (i Install) write(m manifest) error {
 // another. A compensation that is expensive is a compensation that gets
 // skipped.
 type undoer struct {
-	dir    string
-	stash  string
-	before manifest
-	moved  []string
-	fresh  []string
+	root        string
+	stash       string
+	manifestDir string
+	before      manifest
+	moved       []string
+	fresh       []string
 }
 
-func (u *undoer) displace(id string) error {
-	from := filepath.Join(u.dir, id)
-	if _, err := os.Stat(from); errors.Is(err, os.ErrNotExist) {
-		return nil
+// stashKey flattens a relative directory into one stash entry, so a mod that
+// occupies bepinex/plugins/X and bepinex/patchers/X sets both aside without
+// one overwriting the other.
+func stashKey(rel string) string { return strings.ReplaceAll(rel, "/", "%") }
+
+func (u *undoer) displace(dirs []string) error {
+	for _, rel := range dirs {
+		from := filepath.Join(u.root, filepath.FromSlash(rel))
+		if _, err := os.Stat(from); errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err := os.MkdirAll(u.stash, 0o755); err != nil {
+			return err
+		}
+		if err := os.Rename(from, filepath.Join(u.stash, stashKey(rel))); err != nil {
+			return fmt.Errorf("setting aside %s: %w", rel, err)
+		}
+		u.moved = append(u.moved, rel)
 	}
-	if err := os.MkdirAll(u.stash, 0o755); err != nil {
-		return err
-	}
-	if err := os.Rename(from, filepath.Join(u.stash, id)); err != nil {
-		return fmt.Errorf("setting aside %s: %w", id, err)
-	}
-	u.moved = append(u.moved, id)
 	return nil
 }
 
-func (u *undoer) added(id string) { u.fresh = append(u.fresh, id) }
+func (u *undoer) added(dirs []string) { u.fresh = append(u.fresh, dirs...) }
 
 func (u *undoer) undo(context.Context) error {
 	var first error
@@ -427,20 +577,25 @@ func (u *undoer) undo(context.Context) error {
 		}
 	}
 
-	for _, id := range u.fresh {
-		keep(os.RemoveAll(filepath.Join(u.dir, id)))
+	for _, rel := range u.fresh {
+		keep(os.RemoveAll(filepath.Join(u.root, filepath.FromSlash(rel))))
 	}
-	for _, id := range u.moved {
-		from := filepath.Join(u.stash, id)
+	for _, rel := range u.moved {
+		from := filepath.Join(u.stash, stashKey(rel))
 		if _, err := os.Stat(from); err != nil {
 			continue
 		}
-		keep(os.Rename(from, filepath.Join(u.dir, id)))
+		to := filepath.Join(u.root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
+			keep(err)
+			continue
+		}
+		keep(os.Rename(from, to))
 	}
 	// The manifest goes back last, so a failure above leaves it describing
 	// more than is there rather than less: an over-claiming manifest prunes
 	// a directory that is already gone, and an under-claiming one orphans
 	// files nothing will ever remove.
-	keep(Install{Dir: u.dir}.write(u.before))
+	keep(writeManifest(u.manifestDir, u.before))
 	return first
 }

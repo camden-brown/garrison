@@ -509,8 +509,7 @@ type boundMods struct {
 }
 
 func (b boundMods) Sync(ctx context.Context, inst model.Instance, log func(string)) (func(context.Context) error, error) {
-	dir := modDir(inst, b.game)
-	if dir == "" {
+	if inst.Data == "" {
 		if len(inst.Mods) == 0 {
 			// Nowhere to install and nothing to install: a volume-backed
 			// server with no mods is not a problem to report.
@@ -526,16 +525,19 @@ func (b boundMods) Sync(ctx context.Context, inst model.Instance, log func(strin
 	if source == nil {
 		return nil, fmt.Errorf("%s: Garrison has no resolver for %s packages", inst.Name, b.source)
 	}
-	return mods.Install{Dir: dir, Source: source, Skip: b.game.Bundled()}.Sync(ctx, inst.Mods, log)
+	return mods.Install{
+		Root:   inst.Data,
+		Layout: modLayout(inst, b.game),
+		Source: source,
+		Skip:   b.game.Bundled(),
+	}.Sync(ctx, inst.Mods, log)
 }
 
-// modDir is the absolute directory a server's mods are installed into, or
-// empty when there is no host path to write to.
-func modDir(inst model.Instance, g games.Installable) string {
-	if inst.Data == "" {
-		return ""
-	}
-	return filepath.Join(inst.Data, filepath.FromSlash(g.ModDir(inst)))
+// modLayout carries the game's answer across to the installer, which cannot
+// see internal/games.
+func modLayout(inst model.Instance, g games.Installable) mods.Layout {
+	l := g.ModLayout(inst)
+	return mods.Layout{Plugins: l.Plugins, Patchers: l.Patchers, Config: l.Config}
 }
 
 // modReleaser picks the source that can say what to download for a version.
@@ -664,8 +666,11 @@ func (m modSources) For(server string) mods.Resolver {
 		// is and has no idea what this server is running.
 		ts := mods.Thunderstore{}
 		if installable, ok := g.(games.Installable); ok {
-			if dir := modDir(srv.Instance, installable); dir != "" {
-				ts.Installed = mods.Install{Dir: dir}.Installed
+			if srv.Instance.Data != "" {
+				ts.Installed = mods.Install{
+					Root:   srv.Instance.Data,
+					Layout: modLayout(srv.Instance, installable),
+				}.Installed
 			}
 		}
 		return ts

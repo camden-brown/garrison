@@ -32,15 +32,30 @@ func (Game) LoadOrderMatters() bool { return false }
 // rather than a stub.
 func (Game) Apply(model.Instance, []games.Mod) ([]model.File, error) { return nil, nil }
 
-// ModDir is where the image looks for plugins to sync into the loader.
+// ModLayout is where BepInEx reads each kind of assembly, staged under the
+// instance's data.
 //
-// The lloesche image rsyncs /config/bepinex/plugins/ into the BepInEx
-// installation on every boot, and symlinks BepInEx's config directory to
-// /config/bepinex/. So this is the staging directory, not the live one: a
-// server can be running while it is written, and the change takes effect at
-// the next start — which is why the install step does not need the server
-// stopped.
-func (Game) ModDir(model.Instance) string { return "bepinex/plugins" }
+// These are staging directories, not the live ones: the image rsyncs
+// /config/bepinex/plugins/ into the installation on every boot and Plan's
+// hook does the same for both, so a server can be running while they are
+// written and the change takes effect at the next start. That is why the
+// install step does not need the server stopped.
+//
+// Patchers are separate because BepInEx loads them before the game — they
+// rewrite assemblies the plugins then patch — and it looks for them nowhere
+// else. HookGenPatcher ships nothing but patchers, so a layout with only a
+// plugins directory installs it somewhere nothing reads.
+func (Game) ModLayout(model.Instance) games.ModLayout {
+	return games.ModLayout{
+		Plugins:  "bepinex/plugins",
+		Patchers: "bepinex/patchers",
+		// The image symlinks BepInEx's config directory out to
+		// /config/bepinex, so this is both where a package's defaults land
+		// and where the operator's edits live — which is exactly why they
+		// are only ever written when nothing is there.
+		Config: "bepinex",
+	}
+}
 
 // ClientSteps is what a player has to do before they can join.
 //

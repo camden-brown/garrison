@@ -42,12 +42,18 @@ func TestTheLoaderFlagIsTheWordTheImageReads(t *testing.T) {
 	}
 }
 
-// ModDir is relative to the instance's data, like model.File, so a plugin
+// The layout is relative to the instance's data, like model.File, so a plugin
 // never learns where the world is mounted.
-func TestModDirIsTheImagesStagingDirectory(t *testing.T) {
-	dir := (Game{}).ModDir(instance())
-	if dir != "bepinex/plugins" {
-		t.Errorf("ModDir() = %q, want the directory the image syncs into the loader", dir)
+//
+// Patchers are a separate directory because BepInEx reads them before the
+// game's assemblies exist and never looks among the plugins for one.
+func TestTheLayoutStagesPluginsAndPatchersSeparately(t *testing.T) {
+	l := (Game{}).ModLayout(instance())
+	if l.Plugins != "bepinex/plugins" {
+		t.Errorf("Plugins = %q, want the directory the image syncs into the loader", l.Plugins)
+	}
+	if l.Patchers != "bepinex/patchers" {
+		t.Errorf("Patchers = %q, want BepInEx's own patchers directory", l.Patchers)
 	}
 }
 
@@ -100,11 +106,14 @@ func TestAModdedServerSyncsItsPluginsBeforeItStarts(t *testing.T) {
 	}
 	// Both halves have to be in it: where Garrison installed them, and
 	// where the loader reads them.
-	if !strings.Contains(hook, "/config/"+(Game{}).ModDir(inst)) {
-		t.Errorf("hook = %q, want it to read from where mods are installed", hook)
-	}
-	if !strings.Contains(hook, "/opt/valheim/bepinex/BepInEx/plugins") {
-		t.Errorf("hook = %q, want it to write where the loader reads", hook)
+	l := (Game{}).ModLayout(inst)
+	for _, want := range []string{
+		"/config/" + l.Plugins, "/opt/valheim/bepinex/BepInEx/plugins",
+		"/config/" + l.Patchers, "/opt/valheim/bepinex/BepInEx/patchers",
+	} {
+		if !strings.Contains(hook, want) {
+			t.Errorf("hook = %q, want it to mention %s", hook, want)
+		}
 	}
 }
 

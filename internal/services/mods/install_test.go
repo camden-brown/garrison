@@ -38,6 +38,10 @@ func pkgZip(t *testing.T, files map[string]string) []byte {
 	return buf.Bytes()
 }
 
+// layout is Valheim's, which is the only shape that exists so far: plugins
+// and patchers under the instance's data.
+var layout = mods.Layout{Plugins: "bepinex/plugins", Patchers: "bepinex/patchers", Config: "bepinex"}
+
 // releases is a Releaser with no network behind it.
 type releases map[string]mods.Release
 
@@ -68,7 +72,7 @@ func zipServer(t *testing.T, byPath map[string][]byte) *httptest.Server {
 }
 
 func TestInstallUnpacksAPackage(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "bepinex", "plugins")
+	dir := t.TempDir()
 	zipped := pkgZip(t, map[string]string{
 		"plugins/Jotunn.dll":       "assembly",
 		"plugins/sub/asset.bundle": "asset",
@@ -79,7 +83,8 @@ func TestInstallUnpacksAPackage(t *testing.T) {
 	srv := zipServer(t, map[string][]byte{"/jotunn.zip": zipped})
 
 	install := mods.Install{
-		Dir:    dir,
+		Root:   dir,
+		Layout: layout,
 		Source: releases{"ValheimModding-Jotunn": {ID: "ValheimModding-Jotunn", Version: "2.30.0", URL: srv.URL + "/jotunn.zip"}},
 	}
 
@@ -89,14 +94,14 @@ func TestInstallUnpacksAPackage(t *testing.T) {
 
 	// One directory per mod, which is what makes pruning exact and what
 	// BepInEx walks anyway.
-	if got := read(t, filepath.Join(dir, "ValheimModding-Jotunn", "Jotunn.dll")); got != "assembly" {
+	if got := read(t, filepath.Join(dir, "bepinex", "plugins", "ValheimModding-Jotunn", "Jotunn.dll")); got != "assembly" {
 		t.Errorf("the plugin did not land: %q", got)
 	}
-	if got := read(t, filepath.Join(dir, "ValheimModding-Jotunn", "sub", "asset.bundle")); got != "asset" {
+	if got := read(t, filepath.Join(dir, "bepinex", "plugins", "ValheimModding-Jotunn", "sub", "asset.bundle")); got != "asset" {
 		t.Errorf("a nested file did not land: %q", got)
 	}
 	for _, unwanted := range []string{"manifest.json", "README.md", filepath.Join("BepInEx", "config", "x.cfg")} {
-		if _, err := os.Stat(filepath.Join(dir, "ValheimModding-Jotunn", unwanted)); err == nil {
+		if _, err := os.Stat(filepath.Join(dir, "bepinex", "plugins", "ValheimModding-Jotunn", unwanted)); err == nil {
 			t.Errorf("%s was installed, and it is not plugin content", unwanted)
 		}
 	}
@@ -125,7 +130,8 @@ func TestSyncLeavesFilesGarrisonDidNotInstall(t *testing.T) {
 	zipped := pkgZip(t, map[string]string{"plugins/A.dll": "a"})
 	srv := zipServer(t, map[string][]byte{"/a.zip": zipped})
 	install := mods.Install{
-		Dir:    dir,
+		Root:   dir,
+		Layout: layout,
 		Source: releases{"Some-Mod": {ID: "Some-Mod", Version: "1.0.0", URL: srv.URL + "/a.zip"}},
 	}
 
@@ -137,7 +143,7 @@ func TestSyncLeavesFilesGarrisonDidNotInstall(t *testing.T) {
 		t.Fatalf("second Sync() error = %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(dir, "Some-Mod")); err == nil {
+	if _, err := os.Stat(filepath.Join(dir, "bepinex", "plugins", "Some-Mod")); err == nil {
 		t.Error("the configured mod was not removed once it stopped being configured")
 	}
 	if got := read(t, filepath.Join(byHand, "Mine.dll")); got != "mine" {
@@ -154,7 +160,8 @@ func TestUndoPutsBackWhatWasThere(t *testing.T) {
 	srv := zipServer(t, map[string][]byte{"/old.zip": old, "/new.zip": updated})
 
 	first := mods.Install{
-		Dir:    dir,
+		Root:   dir,
+		Layout: layout,
 		Source: releases{"Some-Mod": {ID: "Some-Mod", Version: "1.0.0", URL: srv.URL + "/old.zip"}},
 	}
 	if _, err := first.Sync(context.Background(), []model.ModRef{{ID: "Some-Mod"}}, nil); err != nil {
@@ -162,7 +169,8 @@ func TestUndoPutsBackWhatWasThere(t *testing.T) {
 	}
 
 	second := mods.Install{
-		Dir: dir,
+		Root:   dir,
+		Layout: layout,
 		Source: releases{
 			"Some-Mod":  {ID: "Some-Mod", Version: "2.0.0", URL: srv.URL + "/new.zip"},
 			"Other-Mod": {ID: "Other-Mod", Version: "1.0.0", URL: srv.URL + "/new.zip"},
@@ -172,17 +180,17 @@ func TestUndoPutsBackWhatWasThere(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second Sync() error = %v", err)
 	}
-	if got := read(t, filepath.Join(dir, "Some-Mod", "A.dll")); got != "new" {
+	if got := read(t, filepath.Join(dir, "bepinex", "plugins", "Some-Mod", "A.dll")); got != "new" {
 		t.Fatalf("the update did not happen: %q", got)
 	}
 
 	if err := undo(context.Background()); err != nil {
 		t.Fatalf("undo() error = %v", err)
 	}
-	if got := read(t, filepath.Join(dir, "Some-Mod", "A.dll")); got != "old" {
+	if got := read(t, filepath.Join(dir, "bepinex", "plugins", "Some-Mod", "A.dll")); got != "old" {
 		t.Errorf("after undo the file is %q, want the version that was there before", got)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "Other-Mod")); err == nil {
+	if _, err := os.Stat(filepath.Join(dir, "bepinex", "plugins", "Other-Mod")); err == nil {
 		t.Error("after undo the newly installed mod is still there")
 	}
 	if v := second.Installed("Some-Mod").Version; v != "1.0.0" {
@@ -203,7 +211,8 @@ func TestSyncSkipsWhatIsAlreadyCurrent(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	install := mods.Install{
-		Dir:    dir,
+		Root:   dir,
+		Layout: layout,
 		Source: releases{"Some-Mod": {ID: "Some-Mod", Version: "1.0.0", URL: srv.URL + "/a.zip"}},
 	}
 	refs := []model.ModRef{{ID: "Some-Mod"}}
@@ -222,14 +231,15 @@ func TestSyncSkipsWhatIsAlreadyCurrent(t *testing.T) {
 func TestSyncSkipsWhatTheImageInstalls(t *testing.T) {
 	dir := t.TempDir()
 	install := mods.Install{
-		Dir:    dir,
+		Root:   dir,
+		Layout: layout,
 		Source: releases{},
 		Skip:   []string{"denikson-BepInExPack_Valheim"},
 	}
 	if _, err := install.Sync(context.Background(), []model.ModRef{{ID: "denikson-BepInExPack_Valheim"}}, nil); err != nil {
 		t.Fatalf("Sync() error = %v, want the bundled pack skipped rather than resolved", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "denikson-BepInExPack_Valheim")); err == nil {
+	if _, err := os.Stat(filepath.Join(dir, "bepinex", "plugins", "denikson-BepInExPack_Valheim")); err == nil {
 		t.Error("the bundled loader was installed")
 	}
 }
@@ -241,7 +251,8 @@ func TestAPackageCannotEscapeItsDirectory(t *testing.T) {
 	srv := zipServer(t, map[string][]byte{"/evil.zip": zipped})
 
 	install := mods.Install{
-		Dir:    dir,
+		Root:   dir,
+		Layout: layout,
 		Source: releases{"Bad-Mod": {ID: "Bad-Mod", Version: "1.0.0", URL: srv.URL + "/evil.zip"}},
 	}
 	_, err := install.Sync(context.Background(), []model.ModRef{{ID: "Bad-Mod"}}, nil)
@@ -263,4 +274,169 @@ func read(t *testing.T, path string) string {
 		return ""
 	}
 	return string(data)
+}
+
+// HookGenPatcher ships patchers and nothing else. BepInEx reads those before
+// the game's assemblies exist and never looks for them among the plugins, so
+// installing one as a plugin is installing a file nothing will ever read —
+// which looks exactly like a working install until a mod that needs it fails.
+func TestPatchersGoWhereThePatchersGo(t *testing.T) {
+	dir := t.TempDir()
+	zipped := pkgZip(t, map[string]string{
+		"patchers/HookGenPatcher/HookGenPatcher.dll": "patcher",
+		"config/HookGenPatcher.cfg":                  "the author's defaults",
+		"manifest.json":                              "{}",
+	})
+	srv := zipServer(t, map[string][]byte{"/hook.zip": zipped})
+
+	install := mods.Install{
+		Root:   dir,
+		Layout: layout,
+		Source: releases{"ValheimModding-HookGenPatcher": {ID: "ValheimModding-HookGenPatcher", Version: "0.0.4", URL: srv.URL + "/hook.zip"}},
+	}
+	if _, err := install.Sync(context.Background(), []model.ModRef{{ID: "ValheimModding-HookGenPatcher"}}, nil); err != nil {
+		t.Fatalf("Sync() error = %v", err)
+	}
+
+	landed := filepath.Join(dir, "bepinex", "patchers", "ValheimModding-HookGenPatcher", "HookGenPatcher", "HookGenPatcher.dll")
+	if got := read(t, landed); got != "patcher" {
+		t.Errorf("the patcher did not land in the patchers directory: %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "bepinex", "plugins", "ValheimModding-HookGenPatcher")); err == nil {
+		t.Error("a patchers-only package also created a plugins directory")
+	}
+	// The config goes to the config directory, not into the mod's own — and
+	// for this package it is the whole point: without it HookGenPatcher
+	// hooks the wrong assembly and every mod that needs the hooks fails.
+	if got := read(t, filepath.Join(dir, "bepinex", "HookGenPatcher.cfg")); got != "the author's defaults" {
+		t.Errorf("the shipped config did not land: %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "bepinex", "patchers", "ValheimModding-HookGenPatcher", "config")); err == nil {
+		t.Error("the config was installed inside the mod's directory too")
+	}
+}
+
+// A package with both kinds occupies two directories, and pruning has to know
+// about both or it leaves half a mod behind.
+func TestAPackageWithBothKindsIsTrackedInBoth(t *testing.T) {
+	dir := t.TempDir()
+	zipped := pkgZip(t, map[string]string{
+		"plugins/Thing.dll":       "plugin",
+		"patchers/ThingPatch.dll": "patcher",
+	})
+	srv := zipServer(t, map[string][]byte{"/both.zip": zipped})
+
+	install := mods.Install{
+		Root:   dir,
+		Layout: layout,
+		Source: releases{"Some-Both": {ID: "Some-Both", Version: "1.0.0", URL: srv.URL + "/both.zip"}},
+	}
+	refs := []model.ModRef{{ID: "Some-Both"}}
+	if _, err := install.Sync(context.Background(), refs, nil); err != nil {
+		t.Fatalf("Sync() error = %v", err)
+	}
+
+	plugin := filepath.Join(dir, "bepinex", "plugins", "Some-Both")
+	patcher := filepath.Join(dir, "bepinex", "patchers", "Some-Both")
+	for _, d := range []string{plugin, patcher} {
+		if _, err := os.Stat(d); err != nil {
+			t.Fatalf("%s is missing: %v", d, err)
+		}
+	}
+
+	// Dropped from the configuration: both halves go.
+	if _, err := install.Sync(context.Background(), nil, nil); err != nil {
+		t.Fatalf("second Sync() error = %v", err)
+	}
+	for _, d := range []string{plugin, patcher} {
+		if _, err := os.Stat(d); err == nil {
+			t.Errorf("%s survived the prune, so half the mod is still loaded", d)
+		}
+	}
+}
+
+// A game whose loader has no patchers cannot install a package that is only
+// patchers, and saying so beats writing the files somewhere nothing reads.
+func TestAPatcherWithNowhereToGoIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	zipped := pkgZip(t, map[string]string{"patchers/X.dll": "patcher"})
+	srv := zipServer(t, map[string][]byte{"/p.zip": zipped})
+
+	install := mods.Install{
+		Root:   dir,
+		Layout: mods.Layout{Plugins: "mods"}, // no patchers
+		Source: releases{"Some-Patcher": {ID: "Some-Patcher", Version: "1.0.0", URL: srv.URL + "/p.zip"}},
+	}
+	_, err := install.Sync(context.Background(), []model.ModRef{{ID: "Some-Patcher"}}, nil)
+	if err == nil {
+		t.Fatal("Sync() accepted a package this game has nowhere to put")
+	}
+	if !strings.Contains(err.Error(), "nowhere") {
+		t.Errorf("error = %v, want it to say why", err)
+	}
+}
+
+// The rule that keeps both halves true: a package's defaults arrive when
+// nothing is there, and an operator's edits are never overwritten by an
+// update. Both mod managers work this way, and so does the server image.
+func TestAPackageConfigNeverOverwritesTheOperators(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "bepinex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tuned := filepath.Join(dir, "bepinex", "Mine.cfg")
+	if err := os.WriteFile(tuned, []byte("an afternoon of tuning"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	zipped := pkgZip(t, map[string]string{
+		"plugins/Thing.dll": "plugin",
+		"config/Mine.cfg":   "the author's defaults",
+		"config/New.cfg":    "also the author's",
+	})
+	srv := zipServer(t, map[string][]byte{"/c.zip": zipped})
+	install := mods.Install{
+		Root:   dir,
+		Layout: layout,
+		Source: releases{"Some-Mod": {ID: "Some-Mod", Version: "1.0.0", URL: srv.URL + "/c.zip"}},
+	}
+	if _, err := install.Sync(context.Background(), []model.ModRef{{ID: "Some-Mod"}}, nil); err != nil {
+		t.Fatalf("Sync() error = %v", err)
+	}
+
+	if got := read(t, tuned); got != "an afternoon of tuning" {
+		t.Errorf("the operator's config was overwritten: %q", got)
+	}
+	if got := read(t, filepath.Join(dir, "bepinex", "New.cfg")); got != "also the author's" {
+		t.Errorf("a config with nothing in its way did not land: %q", got)
+	}
+}
+
+// Removing a mod takes its assemblies and leaves its settings. Configuration
+// is the operator's work, and a reinstall a week later should find it.
+func TestPruningLeavesConfigurationAlone(t *testing.T) {
+	dir := t.TempDir()
+	zipped := pkgZip(t, map[string]string{
+		"plugins/Thing.dll": "plugin",
+		"config/Thing.cfg":  "settings",
+	})
+	srv := zipServer(t, map[string][]byte{"/c.zip": zipped})
+	install := mods.Install{
+		Root:   dir,
+		Layout: layout,
+		Source: releases{"Some-Mod": {ID: "Some-Mod", Version: "1.0.0", URL: srv.URL + "/c.zip"}},
+	}
+	if _, err := install.Sync(context.Background(), []model.ModRef{{ID: "Some-Mod"}}, nil); err != nil {
+		t.Fatalf("Sync() error = %v", err)
+	}
+	if _, err := install.Sync(context.Background(), nil, nil); err != nil {
+		t.Fatalf("second Sync() error = %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "bepinex", "plugins", "Some-Mod")); err == nil {
+		t.Error("the mod was not removed")
+	}
+	if got := read(t, filepath.Join(dir, "bepinex", "Thing.cfg")); got != "settings" {
+		t.Errorf("the configuration went with it: %q", got)
+	}
 }

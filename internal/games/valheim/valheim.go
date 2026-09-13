@@ -9,6 +9,8 @@
 package valheim
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/camden-brown/garrison/internal/games"
@@ -187,8 +189,15 @@ const containerConfig = "/config"
 // the volume — which is the whole reason the hook below exists.
 const loaderPlugins = "/opt/valheim/bepinex/BepInEx/plugins"
 
+// loaderPatchers is where BepInEx looks for preloader patchers, which it
+// reads before the game's assemblies exist and never looks for elsewhere.
+const loaderPatchers = "/opt/valheim/bepinex/BepInEx/patchers"
+
 // syncPluginsHook copies the staged mods into the loader immediately before
 // the server starts.
+//
+// Both directories, because a patcher staged where nothing copies it is the
+// same as one installed in the wrong place.
 //
 // The image already syncs that directory, but only when the loader's plugins
 // directory exists at the moment it looks — and on the boot that installs the
@@ -204,8 +213,26 @@ const loaderPlugins = "/opt/valheim/bepinex/BepInEx/plugins"
 // what should be loaded: without it a mod removed from the TOML would keep
 // running until something else recreated the container.
 func syncPluginsHook(inst model.Instance) string {
-	staged := containerConfig + "/" + Game{}.ModDir(inst)
-	return "mkdir -p " + loaderPlugins + " && rsync -a --delete " + staged + "/ " + loaderPlugins + "/"
+	layout := Game{}.ModLayout(inst)
+
+	// --delete because the staging directory is the whole truth about what
+	// should load: without it a mod removed from the TOML would keep
+	// running until something else recreated the container. Safe on both
+	// sides — the BepInEx pack ships an empty patchers directory, so there
+	// is nothing of the loader's own to delete.
+	var b strings.Builder
+	for _, d := range []struct{ staged, live string }{
+		{containerConfig + "/" + layout.Plugins, loaderPlugins},
+		{containerConfig + "/" + layout.Patchers, loaderPatchers},
+	} {
+		if b.Len() > 0 {
+			b.WriteString(" && ")
+		}
+		// The source is created too: rsync fails on a directory that does
+		// not exist, and a server with no patchers is the ordinary case.
+		fmt.Fprintf(&b, "mkdir -p %s %s && rsync -a --delete %s/ %s/", d.staged, d.live, d.staged, d.live)
+	}
+	return b.String()
 }
 
 // Compile returns no files.
